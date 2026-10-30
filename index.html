@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Concrete mixes</title>
+  <meta name="description" content="Types of concrete and the ingredients that go into each one.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Two links so one font failing to load doesn't take the other with it. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+
+  <script src="data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <h1 class="sr-only">Concrete mixes</h1>
+
+  <div class="app">
+    <aside class="panel panel--concretes" aria-labelledby="concretes-title">
+      <h2 class="panel-title" id="concretes-title">Concretes</h2>
+      <div class="panel-scroll">
+        <div id="publish-draft"></div>
+        <div id="concrete-draft"></div>
+        <ul class="list" id="concrete-list"></ul>
+      </div>
+    </aside>
+
+    <main class="workspace" id="workspace" aria-label="Workspace">
+      <div class="paper" id="paper" tabindex="-1">
+        <div class="sheet" id="sheet"></div>
+      </div>
+
+      <p class="empty-hint" id="empty-hint">
+        <span class="hint-pointer">Drag a concrete or an ingredient onto the paper.</span>
+        <span class="hint-touch">Tap + next to a concrete or an ingredient to put it on the paper.</span>
+      </p>
+
+      <p class="toast" id="toast" role="status" hidden></p>
+
+      <div class="toolbar" id="toolbar" role="group" aria-label="Workspace tools">
+        <button type="button" class="tool" id="add-concrete" aria-label="Add concrete" aria-controls="concrete-draft">
+          <span class="tool-long">Add concrete</span><span class="tool-short">+ Concrete</span>
+        </button>
+        <button type="button" class="tool" id="add-ingredient" aria-label="Add ingredient" aria-controls="ingredient-draft">
+          <span class="tool-long">Add ingredient</span><span class="tool-short">+ Ingredient</span>
+        </button>
+        <button type="button" class="tool" id="clear-canvas" aria-label="Clear canvas">
+          <span class="tool-long">Clear canvas</span><span class="tool-short">Clear</span>
+        </button>
+        <button type="button" class="tool tool--icon" id="undo" aria-label="Undo">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
+            <path d="M6.5 3.5 3 7l3.5 3.5"/><path d="M3.5 7H11a4 4 0 0 1 0 8H7.5"/>
+          </svg>
+        </button>
+        <button type="button" class="tool tool--icon" id="redo" aria-label="Redo">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
+            <path d="M11.5 3.5 15 7l-3.5 3.5"/><path d="M14.5 7H7a4 4 0 0 0 0 8h3.5"/>
+          </svg>
+        </button>
+        <button type="button" class="tool tool--publish" id="publish" aria-controls="publish-draft" hidden>
+          <span id="publish-label">Publish</span> <span class="tool-note" id="publish-count"></span>
+        </button>
+      </div>
+    </main>
+
+    <aside class="panel panel--ingredients" aria-labelledby="ingredients-title">
+      <h2 class="panel-title" id="ingredients-title">Ingredients</h2>
+      <div class="panel-scroll">
+        <div id="ingredient-draft"></div>
+        <div id="ingredient-list"></div>
+      </div>
+    </aside>
+  </div>
+
+  <p id="card-help" hidden>Drag to move it, or use the arrow keys. Delete removes it.</p>
+</body>
+</html>

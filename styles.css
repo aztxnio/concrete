@@ -1,0 +1,1052 @@
+/* Panels are ink, the workspace is dot-grid paper, and the only accent is a
+   highlighter yellow that always means "these go together". */
+
+:root {
+  /* Neutrals lean very slightly toward the highlighter's hue (93). */
+  --ink: oklch(0.185 0.006 93);
+  --ink-raised: oklch(0.235 0.007 93);
+  --ink-line: oklch(0.3 0.007 93);
+  --ink-edge: oklch(0.12 0.005 93);
+  --chalk: oklch(0.93 0.008 93);
+  --chalk-dim: oklch(0.7 0.01 93);
+  --chalk-faint: oklch(0.47 0.008 93);
+
+  --paper: oklch(0.955 0.007 93);
+  --paper-dot: oklch(0.77 0.012 93);
+  --paper-dot-hot: oklch(0.5 0.014 93);
+  --paper-text: oklch(0.5 0.012 93);
+  --card: oklch(0.988 0.004 93);
+  --card-ink: oklch(0.2 0.008 93);
+  --card-dim: oklch(0.48 0.01 93);
+
+  --marker: oklch(0.88 0.175 93);
+  --marker-hover: oklch(0.92 0.15 93);
+  --marker-ink: oklch(0.22 0.03 93);
+
+  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+  --font-body: "Overpass", "Helvetica Neue", Arial, sans-serif;
+  --text-sm: 0.8125rem;
+  --text-base: 1rem;
+  --text-display: 2.25rem;
+
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* The dot grid. Cards snap to it, so keep GRID in app.js in step. */
+  --grid: 20px;
+
+  --panel-w: clamp(232px, 21vw, 304px);
+  --gutter: var(--space-lg);
+  --bubble: 28px;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--chalk);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.4;
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+svg {
+  display: block;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Layout ------------------------------------------------------------------ */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--panel-w) minmax(0, 1fr) var(--panel-w);
+  grid-template-areas: "concretes workspace ingredients";
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Panels ------------------------------------------------------------------ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ink);
+  color-scheme: dark;
+}
+
+.panel--concretes {
+  grid-area: concretes;
+  border-right: 1px solid var(--ink-edge);
+}
+
+.panel--ingredients {
+  grid-area: ingredients;
+  border-left: 1px solid var(--ink-edge);
+}
+
+.panel-title {
+  margin: 0;
+  padding: var(--space-xl) var(--gutter) var(--space-md);
+  border-bottom: 1px solid var(--ink-line);
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: 0.01em;
+}
+
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--space-2xl);
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-line) transparent;
+}
+
+.panel-scroll > .list,
+#ingredient-list {
+  padding-top: var(--space-xs);
+}
+
+/* Bubbles: every concrete and ingredient has one, holding its icon if it has
+   one. currentColor tints the empty ones to suit wherever they sit. */
+
+.bubble {
+  display: block;
+  flex: none;
+  width: var(--bubble);
+  height: var(--bubble);
+  overflow: hidden;
+  border-radius: 50%;
+  outline: 1px solid color-mix(in oklch, currentColor 24%, transparent);
+  outline-offset: -1px;
+  background: color-mix(in oklch, currentColor 14%, transparent);
+}
+
+.bubble img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Rows, in both panels ---------------------------------------------------- */
+
+.row {
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 160ms var(--ease-out);
+}
+
+.row-main {
+  display: grid;
+  grid-template-columns: var(--bubble) minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-xs) var(--space-2xl) var(--space-xs) var(--gutter);
+  border: 0;
+  background: none;
+  color: var(--chalk);
+  text-align: left;
+  line-height: 1.4;
+  transition:
+    background-color 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+button.row-main:hover {
+  background: var(--ink-raised);
+}
+
+.row-main:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+.row-main > .bubble {
+  grid-row: 1;
+}
+
+.row-name {
+  display: flex;
+  align-items: center;
+  min-height: var(--bubble);
+}
+
+.row-desc {
+  display: none;
+  grid-column: 2;
+  margin-top: var(--space-2xs);
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.row-count {
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--gutter);
+  color: var(--chalk-faint);
+  font-size: var(--text-sm);
+  line-height: var(--bubble);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.row-place {
+  position: absolute;
+  top: calc(var(--space-xs) + (var(--bubble) - 32px) / 2);
+  right: var(--space-xs);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--chalk);
+  opacity: 0;
+  transition:
+    opacity 120ms var(--ease-out),
+    background-color 120ms var(--ease-out);
+}
+
+.row:hover .row-place,
+.row:focus-within .row-place {
+  opacity: 1;
+}
+
+.row:hover .row-count,
+.row:focus-within .row-count {
+  opacity: 0;
+}
+
+.row-place:hover {
+  background: color-mix(in oklch, currentColor 16%, transparent);
+}
+
+.row-place:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+/* An ingredient opened to read its description */
+
+.row.is-open .row-desc {
+  display: block;
+}
+
+/* The selected concrete, and the ingredients that go into it */
+
+.row.is-selected .row-main,
+.row.is-lit .row-main {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.row.is-selected .row-desc {
+  display: block;
+}
+
+.row.is-selected .row-desc,
+.row.is-lit .row-desc {
+  color: color-mix(in oklch, var(--marker-ink) 82%, var(--marker));
+}
+
+.row.is-selected .row-count {
+  color: color-mix(in oklch, var(--marker-ink) 65%, var(--marker));
+}
+
+.row.is-selected .row-place,
+.row.is-lit .row-place {
+  color: var(--marker-ink);
+}
+
+.row.is-selected .row-main:focus-visible,
+.row.is-lit .row-main:focus-visible,
+.row.is-selected .row-place:focus-visible,
+.row.is-lit .row-place:focus-visible {
+  outline-color: var(--marker-ink);
+}
+
+/* Edit, under a selected concrete or an opened ingredient */
+
+.row-tools {
+  display: none;
+  padding: 0 var(--space-2xl) var(--space-sm) calc(var(--gutter) + var(--bubble) + var(--space-sm));
+}
+
+.row.is-selected .row-tools,
+.row.is-open .row-tools {
+  display: block;
+}
+
+.row.is-selected .row-tools,
+.row.is-lit .row-tools {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.row-edit {
+  height: 28px;
+  padding: 0 var(--space-sm);
+  border: 1px solid color-mix(in oklch, currentColor 35%, transparent);
+  background: none;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.row-edit:hover {
+  border-color: currentColor;
+}
+
+.row-edit:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+.row.is-selected .row-edit:focus-visible,
+.row.is-lit .row-edit:focus-visible {
+  outline-color: var(--marker-ink);
+}
+
+.row.is-dim {
+  opacity: 0.32;
+}
+
+.row.is-dim:hover {
+  opacity: 0.7;
+}
+
+.row.is-new .row-main {
+  animation: row-arrive 900ms var(--ease-out);
+}
+
+@keyframes row-arrive {
+  from {
+    background-color: color-mix(in oklch, var(--marker) 45%, var(--ink));
+  }
+}
+
+.list[inert] {
+  opacity: 0.35;
+}
+
+/* Picking ingredients for a new concrete: each row gets a tick box where its
+   + button usually sits. */
+
+.is-picking .row-place {
+  display: none;
+}
+
+.row-check {
+  position: absolute;
+  top: calc(var(--space-xs) + (var(--bubble) - 14px) / 2);
+  right: var(--gutter);
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  opacity: 0.6;
+}
+
+.row-main[aria-pressed="true"] .row-check {
+  background: currentColor;
+  box-shadow: inset 0 0 0 2px var(--marker);
+  opacity: 1;
+}
+
+/* Ingredient groups */
+
+.group {
+  margin-top: var(--space-sm);
+}
+
+.group-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-sm) var(--gutter) var(--space-2xs);
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.group-name::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--ink-line);
+}
+
+/* Add forms --------------------------------------------------------------- */
+
+.draft {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--gutter) var(--space-lg);
+  border-bottom: 1px solid var(--ink-line);
+  background: var(--ink-raised);
+}
+
+.draft-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.draft-field {
+  display: grid;
+  gap: var(--space-2xs);
+}
+
+.draft-label {
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+}
+
+.draft-input {
+  width: 100%;
+  padding: var(--space-2xs) 0;
+  border: 0;
+  border-bottom: 1px solid var(--chalk-faint);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-base);
+  line-height: 1.4;
+}
+
+textarea.draft-input {
+  min-height: calc(1.4em * 3 + var(--space-xs));
+  resize: vertical;
+}
+
+.draft-input:focus {
+  outline: none;
+  border-bottom-color: var(--marker);
+  box-shadow: 0 1px 0 var(--marker);
+}
+
+.icon-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.icon-field .bubble {
+  --bubble: 40px;
+  margin-right: var(--space-2xs);
+}
+
+.draft-hint {
+  margin: 0;
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.draft-hint.is-error {
+  color: var(--marker);
+}
+
+.draft-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.btn {
+  height: 32px;
+  padding: 0 var(--space-md);
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.btn--marker {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.btn--marker:hover {
+  background: var(--marker-hover);
+}
+
+.btn--quiet {
+  border-color: var(--ink-line);
+  color: var(--chalk-dim);
+}
+
+.btn--quiet:hover {
+  border-color: var(--chalk-faint);
+  color: var(--chalk);
+}
+
+.btn--plain {
+  padding: 0 var(--space-xs);
+  color: var(--chalk-dim);
+}
+
+.btn--plain:hover {
+  color: var(--chalk);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+/* A second way through a form, like downloading instead of publishing */
+.draft-alt {
+  justify-self: start;
+  height: auto;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Workspace --------------------------------------------------------------- */
+
+.workspace {
+  grid-area: workspace;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  background: var(--paper);
+  color: var(--card-ink);
+  color-scheme: light;
+}
+
+/* Frame that appears while something is dragged over the paper */
+.workspace::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px transparent;
+  transition: box-shadow 160ms var(--ease-out);
+}
+
+.workspace.is-drop-target::after {
+  box-shadow: inset 0 0 0 2px var(--card-ink);
+}
+
+.paper {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+
+/* Dots sit exactly on multiples of --grid, where card corners snap. */
+.sheet {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  background-color: var(--paper);
+  background-image: radial-gradient(circle, var(--paper-dot) 1.1px, transparent 1.6px);
+  background-position: calc(var(--grid) / -2) calc(var(--grid) / -2);
+  background-size: var(--grid) var(--grid);
+}
+
+.workspace.is-drop-target .sheet {
+  background-image: radial-gradient(circle, var(--paper-dot-hot) 1.25px, transparent 1.75px);
+}
+
+.empty-hint {
+  position: absolute;
+  top: calc(var(--grid) * 2);
+  left: calc(var(--grid) * 2);
+  max-width: min(36ch, calc(100% - var(--grid) * 4));
+  margin: 0;
+  color: var(--paper-text);
+  pointer-events: none;
+}
+
+.empty-hint[hidden],
+.hint-touch {
+  display: none;
+}
+
+.toast {
+  position: absolute;
+  right: var(--space-md);
+  bottom: calc(44px + var(--space-md));
+  z-index: 3;
+  max-width: min(40ch, calc(100% - var(--space-xl)));
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--ink);
+  color: var(--chalk);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+.toast-action {
+  margin-left: var(--space-2xs);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.toast-action:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+/* Clear of Publish when that's showing too */
+.workspace:has(.tool--publish:not([hidden])) .toast {
+  bottom: calc(44px * 2 + var(--space-md));
+}
+
+/* Cards on the paper ------------------------------------------------------ */
+
+.card {
+  position: absolute;
+  background: var(--card);
+  border: 1px solid var(--card-ink);
+  color: var(--card-ink);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.card:focus {
+  outline: 2px solid var(--card-ink);
+  outline-offset: 3px;
+}
+
+.card.is-dragging {
+  z-index: 1;
+  cursor: grabbing;
+  box-shadow: 6px 6px 0 oklch(0.2 0.008 93 / 0.14);
+}
+
+.card.is-new {
+  animation: card-arrive 360ms var(--ease-out);
+}
+
+@keyframes card-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+.card-title {
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.card-head .bubble,
+.card-row .bubble {
+  --bubble: 22px;
+}
+
+.card-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  margin: 0;
+  color: var(--card-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.card-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.card:hover .card-remove,
+.card:focus-within .card-remove {
+  opacity: 0.7;
+}
+
+.card .card-remove:hover,
+.card .card-remove:focus-visible {
+  opacity: 1;
+}
+
+.card-remove:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+/* A concrete card is a dark title band over its description and ingredients. */
+
+.card--concrete {
+  width: calc(var(--grid) * 12);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 6px var(--space-xl) 6px var(--space-xs);
+  background: var(--card-ink);
+  color: var(--chalk);
+}
+
+.card--concrete .card-desc {
+  padding: var(--space-xs) var(--space-sm) 0;
+}
+
+.card-list {
+  padding: var(--space-xs) var(--space-sm) var(--space-sm);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.card-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 1px 0;
+}
+
+.card-list .bubble {
+  --bubble: 16px;
+}
+
+/* Highlighter stroke across the lower part of the words, like on paper */
+.card-list .is-lit .card-item {
+  background-image: linear-gradient(transparent 40%, var(--marker) 40%, var(--marker) 92%, transparent 92%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.card--concrete.is-lit .card-head {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+/* An ingredient card is its bubble, name and description. */
+
+.card--ingredient {
+  width: calc(var(--grid) * 10);
+  padding: var(--space-xs) var(--space-xl) var(--space-xs) var(--space-xs);
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.card--ingredient .card-desc {
+  margin-top: var(--space-2xs);
+  padding-left: calc(22px + var(--space-xs));
+}
+
+.card--ingredient.is-lit {
+  background: var(--marker);
+}
+
+.card--ingredient.is-lit .card-desc {
+  color: color-mix(in oklch, var(--marker-ink) 75%, var(--marker));
+}
+
+/* Toolbar: part of the frame, notched into the paper's bottom-left corner */
+
+.toolbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  border-top: 1px solid var(--ink-edge);
+  border-right: 1px solid var(--ink-edge);
+  background: var(--ink);
+  color: var(--chalk);
+  color-scheme: dark;
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  height: 44px;
+  padding: 0 var(--space-md);
+  border: 0;
+  border-left: 1px solid var(--ink-line);
+  background: none;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  white-space: nowrap;
+  transition:
+    background-color 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.tool:first-child {
+  border-left: 0;
+}
+
+.tool:hover {
+  background: var(--ink-raised);
+}
+
+.tool:active {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.tool.is-on {
+  background: var(--ink-raised);
+  box-shadow: inset 0 -2px 0 var(--marker);
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+.tool[aria-disabled="true"] {
+  background: none;
+  color: var(--chalk-faint);
+  cursor: default;
+}
+
+.tool--icon {
+  width: 44px;
+  padding: 0;
+}
+
+.tool-short {
+  display: none;
+}
+
+/* Publish steps up from the toolbar's left end while there are additions
+   that haven't been published yet. */
+.tool--publish {
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 0;
+  grid-auto-flow: column;
+  column-gap: var(--space-xs);
+  border-top: 1px solid var(--ink-edge);
+  border-right: 1px solid var(--ink-edge);
+  border-left: 0;
+  background: var(--ink);
+  animation: tab-arrive 240ms var(--ease-out);
+}
+
+.tool--publish[hidden] {
+  display: none;
+}
+
+/* It sits outside the toolbar's own background, so it keeps its own while busy. */
+.tool--publish[aria-disabled="true"] {
+  background: var(--ink);
+}
+
+.tool-note {
+  color: var(--chalk-dim);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool:active .tool-note {
+  color: inherit;
+}
+
+@keyframes tab-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* When the paper is too narrow for the full labels, the toolbar runs its whole
+   width with short ones. */
+
+@container (max-width: 480px) {
+  .toolbar {
+    right: 0;
+    border-right: 0;
+  }
+
+  .tool {
+    flex: 1 1 auto;
+    padding: 0 var(--space-xs);
+  }
+
+  .tool--icon {
+    flex: 0 0 44px;
+  }
+
+  .tool-long {
+    display: none;
+  }
+
+  .tool-short {
+    display: inline;
+  }
+}
+
+/* Narrower screens: both lists side by side on top, so the highlighting still
+   reads across them, with the paper underneath. */
+
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 46fr) minmax(0, 54fr);
+    grid-template-areas:
+      "concretes ingredients"
+      "workspace workspace";
+  }
+
+  .panel--concretes {
+    border-right-color: var(--ink-line);
+  }
+
+  .panel--ingredients {
+    border-left: 0;
+  }
+
+  .workspace {
+    border-top: 1px solid var(--ink-edge);
+  }
+}
+
+/* Phones: tighter all round */
+
+@media (max-width: 760px) {
+  :root {
+    --gutter: var(--space-sm);
+    --text-display: 1.75rem;
+    --bubble: 24px;
+  }
+
+  .panel-title {
+    padding-top: var(--space-md);
+    padding-bottom: var(--space-sm);
+  }
+
+  .row-main {
+    column-gap: var(--space-xs);
+    padding-right: 40px;
+  }
+
+  .row-tools {
+    padding-right: 40px;
+    padding-left: calc(var(--gutter) + var(--bubble) + var(--space-xs));
+  }
+
+  .row-place {
+    right: var(--space-2xs);
+  }
+
+  .row-check {
+    right: var(--space-sm);
+  }
+
+  .empty-hint {
+    top: var(--grid);
+    left: var(--grid);
+  }
+}
+
+@media (hover: none) {
+  .row-place,
+  .card-remove {
+    opacity: 0.8;
+  }
+
+  .row-count,
+  .hint-pointer {
+    display: none;
+  }
+
+  .hint-touch {
+    display: inline;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
