@@ -9,12 +9,12 @@
   const HISTORY_LIMIT = 200;
   const STORAGE_KEY = "concrete-workspace";
   const PUBLISH_STORAGE_KEY = "concrete-publish"; // the GitHub project and key, kept apart from the data
-  const ICON_SIZE = 96; // icons are stored as squares this many pixels wide
+  const ICON_SIZE = 160; // icons are stored as squares this many pixels wide, sharp in the big bubbles
   const KINDS = ["concretes", "ingredients"];
   const DRAG_TYPE = "application/x-concrete-item";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-  const ICONS = { plus: "M8 3v10M3 8h10", cross: "M4.5 4.5l7 7M11.5 4.5l-7 7" };
+  const ICONS = { plus: "M8 3v10M3 8h10", cross: "M4.5 4.5l7 7M11.5 4.5l-7 7", back: "M10 3.5 5.5 8l4.5 4.5" };
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -23,8 +23,10 @@
 
   const els = {
     concreteDraft: $("#concrete-draft"),
+    concretePage: $("#concrete-page"),
     concreteList: $("#concrete-list"),
     ingredientDraft: $("#ingredient-draft"),
+    ingredientPage: $("#ingredient-page"),
     ingredientList: $("#ingredient-list"),
     workspace: $("#workspace"),
     paper: $("#paper"),
@@ -69,12 +71,18 @@
     ingredientDraft: null, // { editing, name, description, icon, group, error }
     publishDraft: null, // { project, key, error }
     publishing: false,
+    // The item each panel is showing as a page, from See more, and where its
+    // list was scrolled to before.
+    page: { concretes: null, ingredients: null },
+    pageScroll: { concretes: 0, ingredients: 0 },
   };
 
   let cardCount = highestCardNumber();
 
   const findConcrete = (id) => doc.concretes.find((c) => c.id === id);
   const findIngredient = (id) => doc.ingredients.find((i) => i.id === id);
+  const findItem = (kind, id) => doc[kind].find((x) => x.id === id);
+  const singular = (kind) => kind.slice(0, -1); // "concretes" → "concrete", as rows and cards name it
   const findCard = (id) => doc.canvas.find((c) => c.id === id);
   const cardNode = (id) => $(`.card[data-id="${CSS.escape(id)}"]`, els.sheet);
   const ingredientsOf = (concrete) => concrete.ingredients.map(findIngredient).filter(Boolean);
@@ -282,6 +290,8 @@
     "// image data URL. Without one, the item shows a plain circle.",
     "// `group` is optional too. Ingredients that share a group are listed together",
     "// under that heading.",
+    "// `notes` is optional as well: the longer write-up on the item's own page,",
+    "// which opens from See more.",
   ];
 
   // { project: "owner/name", key } for this browser, or null before the first publish.
@@ -660,6 +670,7 @@
     renderConcretes();
     renderIngredients();
     renderDrafts();
+    renderPages();
     renderCanvas();
     renderToolbar();
     paint();
@@ -679,7 +690,7 @@
               String(ingredientsOf(c).length),
               h("span", { class: "sr-only" }, " ingredients"))),
           placeButton("concrete", c),
-          editButton("concrete", c))));
+          rowTools("concrete", c))));
   }
 
   function renderIngredients() {
@@ -709,7 +720,8 @@
   }
 
   // While a concrete is being made or edited, ingredient rows are tick boxes.
-  // Otherwise clicking one opens it, showing its description and Edit.
+  // Otherwise clicking one opens it, showing the start of its description,
+  // See more and Edit.
   function ingredientRow(ingredient, picking) {
     const content = [
       bubble(ingredient),
@@ -728,7 +740,7 @@
     return h("li", { class: "row", draggable: "true", "data-kind": "ingredient", "data-id": ingredient.id },
       main,
       placeButton("ingredient", ingredient),
-      picking || ui.ingredientDraft ? null : editButton("ingredient", ingredient));
+      picking || ui.ingredientDraft ? null : rowTools("ingredient", ingredient));
   }
 
   function placeButton(kind, item) {
@@ -742,16 +754,27 @@
       icon("plus"));
   }
 
-  // Shown under a selected concrete or an opened ingredient.
-  function editButton(kind, item) {
+  // Shown under a selected concrete or an opened ingredient: its page, and Edit.
+  function rowTools(kind, item) {
     return h("div", { class: "row-tools" },
       h("button", {
           type: "button",
-          class: "row-edit",
-          "aria-label": `Edit ${item.name}`,
-          "data-focus-key": `edit:${kind}:${item.id}`,
+          class: "row-action row-more",
+          "aria-label": `See more about ${item.name}`,
+          "data-focus-key": `more:${kind}:${item.id}`,
         },
-        "Edit"));
+        "See more"),
+      editButton(kind, item));
+  }
+
+  function editButton(kind, item) {
+    return h("button", {
+        type: "button",
+        class: "row-action row-edit",
+        "aria-label": `Edit ${item.name}`,
+        "data-focus-key": `edit:${kind}:${item.id}`,
+      },
+      "Edit");
   }
 
   // The forms are built once when opened and left alone after that, so
@@ -821,9 +844,10 @@
           ingredientsOf(concrete).map((i) =>
             h("li", { "data-ingredient": i.id }, bubble(i), h("span", { class: "card-item" }, i.name)))));
     }
+    // An ingredient is its bubble, with its name underneath to say what it is.
     return h("div", attrs,
-      h("div", { class: "card-row" }, bubble(ingredient), h("span", { class: "card-title" }, ingredient.name)),
-      description,
+      bubble(ingredient),
+      h("span", { class: "card-label" }, ingredient.name),
       remove);
   }
 
@@ -909,6 +933,11 @@
   function select(id) {
     if (ui.concreteDraft) return;
     ui.selectedId = id;
+    // An open concrete page follows the selection, such as a card clicked on the paper.
+    if (id && ui.page.concretes && ui.page.concretes !== id) {
+      ui.page.concretes = id;
+      renderPages();
+    }
     paint();
     if (!id) return;
     revealRows([$(".row.is-selected", els.concreteList)]);
@@ -925,7 +954,8 @@
   // heading) is hidden, bring it to the top. If it's showing but the rest can't
   // all fit, leave the panel alone rather than scrolling for a partial gain.
   function revealRows(rows) {
-    rows = rows.filter(Boolean);
+    // Rows in a list that a page is covering have nowhere to scroll to.
+    rows = rows.filter((row) => row?.offsetParent);
     if (!rows.length) return;
     const box = rows[0].closest(".panel-scroll");
     const view = box.getBoundingClientRect();
@@ -941,6 +971,85 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Pages
+  //
+  // See more turns a panel into a page about one item: its picture, description,
+  // what it's made of or used in, and notes. For now the notes are free text.
+
+  function openPage(kind, id) {
+    const box = (kind === "concretes" ? els.concretePage : els.ingredientPage).closest(".panel-scroll");
+    if (!ui.page[kind]) ui.pageScroll[kind] = box.scrollTop;
+    ui.page[kind] = id;
+    if (kind === "concretes") ui.selectedId = id;
+    // Back from the page lands on the row, open, with its See more.
+    else ui.openIngredients.add(id);
+    render();
+    box.scrollTop = 0;
+    $(`[data-focus-key="back:${kind}"]`)?.focus({ preventScroll: true });
+  }
+
+  function closePage(kind) {
+    const id = ui.page[kind];
+    ui.page[kind] = null;
+    render();
+    const box = (kind === "concretes" ? els.concretePage : els.ingredientPage).closest(".panel-scroll");
+    box.scrollTop = ui.pageScroll[kind];
+    $(`[data-focus-key="more:${singular(kind)}:${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+  }
+
+  // A page takes its list's place, except while a form needs that list (ticking
+  // a concrete's ingredients) or the page's own item is being edited.
+  function renderPages() {
+    for (const kind of KINDS) {
+      const host = kind === "concretes" ? els.concretePage : els.ingredientPage;
+      const list = kind === "concretes" ? els.concreteList : els.ingredientList;
+      const item = ui.page[kind] ? findItem(kind, ui.page[kind]) : null;
+      if (!item) ui.page[kind] = null;
+      const picking = kind === "ingredients" && Boolean(ui.concreteDraft);
+      const editing = Boolean(kind === "concretes" ? ui.concreteDraft : ui.ingredientDraft);
+      host.replaceChildren(...(item ? [pageFor(kind, item)] : []));
+      host.hidden = !item || picking || editing;
+      list.hidden = Boolean(item) && !picking;
+    }
+  }
+
+  function pageFor(kind, item) {
+    const concrete = kind === "concretes";
+    const related = concrete ? ingredientsOf(item) : doc.concretes.filter((c) => c.ingredients.includes(item.id));
+    const notes = item.notes?.trim();
+    return h("article", { class: "page", "aria-labelledby": `${kind}-page-title` },
+      h("button", { type: "button", class: "page-back", "data-focus-key": `back:${kind}` },
+        icon("back"),
+        concrete ? "All concretes" : "All ingredients"),
+      h("div", { class: "page-head" },
+        bubble(item),
+        h("h3", { class: "page-title", id: `${kind}-page-title` }, item.name)),
+      item.description ? h("p", { class: "page-desc" }, item.description) : null,
+      related.length
+        ? h("section", { class: "page-section" },
+            h("h4", { class: "page-label" }, concrete ? "Ingredients" : "Used in"),
+            h("ul", { class: "page-links" },
+              related.map((other) =>
+                h("li", null,
+                  h("button", {
+                      type: "button",
+                      class: "page-link",
+                      "data-kind": concrete ? "ingredients" : "concretes",
+                      "data-id": other.id,
+                      "data-focus-key": `link:${kind}:${other.id}`,
+                    },
+                    bubble(other),
+                    h("span", null, other.name))))))
+        : null,
+      h("section", { class: "page-section" },
+        h("h4", { class: "page-label" }, "Notes"),
+        notes
+          ? h("div", { class: "page-notes" }, notes.split(/\n\s*\n/).map((paragraph) => h("p", null, paragraph)))
+          : h("p", { class: "page-empty" }, "No notes yet.")),
+      h("div", { class: "page-actions" }, editButton(singular(kind), item)));
+  }
+
+  // ---------------------------------------------------------------------------
   // Add and edit forms
   //
   // Adding and editing share a form, filled in from the item when editing.
@@ -953,6 +1062,7 @@
         editing: concrete?.id ?? null,
         name: concrete?.name ?? "",
         description: concrete?.description ?? "",
+        notes: concrete?.notes ?? "",
         icon: concrete?.icon ?? "",
         picked: new Set(concrete?.ingredients),
         error: "",
@@ -997,22 +1107,33 @@
       return;
     }
 
-    const fields = { name, description: draft.description.trim(), icon: draft.icon, ingredients };
+    const fields = { name, description: draft.description.trim(), notes: draft.notes.trim(), icon: draft.icon, ingredients };
     const id = draft.editing ?? uniqueId(name, doc.concretes);
     ui.concreteDraft = null;
     ui.selectedId = id;
+    // A concrete page that was open shows the one just saved.
+    if (ui.page.concretes) ui.page.concretes = id;
     if (draft.editing) {
       commit((d) => {
-        d.concretes = d.concretes.map((c) => (c.id === id ? { ...c, ...fields } : c));
+        d.concretes = d.concretes.map((c) => (c.id === id ? withFields(c, fields) : c));
       });
     } else {
-      commit((d) => d.concretes.push({ id, ...fields }));
+      commit((d) => d.concretes.push(withFields({ id }, fields)));
     }
 
     const row = $(`.row[data-id="${CSS.escape(id)}"]`, els.concreteList);
-    $(".row-main", row).focus({ preventScroll: true });
+    const next = draft.editing || ui.page.concretes ? $(`[data-focus-key="edit:concrete:${CSS.escape(id)}"]`) : $(".row-main", row);
+    next?.focus({ preventScroll: true });
     revealRows([row]);
     revealRows($$(".row.is-lit", els.ingredientList));
+  }
+
+  // An item with a form's fields, leaving out empty notes it never had, so that
+  // saving without a change doesn't count as one.
+  function withFields(item, fields) {
+    const next = { ...item, ...fields };
+    if (!fields.notes && !Object.hasOwn(item, "notes")) delete next.notes;
+    return next;
   }
 
   function deleteConcrete(id) {
@@ -1033,6 +1154,7 @@
         editing: ingredient?.id ?? null,
         name: ingredient?.name ?? "",
         description: ingredient?.description ?? "",
+        notes: ingredient?.notes ?? "",
         icon: ingredient?.icon ?? "",
         group: ingredient?.group ?? "",
         error: "",
@@ -1065,24 +1187,36 @@
       return;
     }
 
-    const fields = { name, description: draft.description.trim(), icon: draft.icon, group: draft.group.trim() };
+    const fields = {
+      name,
+      description: draft.description.trim(),
+      notes: draft.notes.trim(),
+      icon: draft.icon,
+      group: draft.group.trim(),
+    };
     const id = draft.editing ?? uniqueId(name, doc.ingredients);
     ui.ingredientDraft = null;
+    // An ingredient page that was open shows the one just saved, unless the list
+    // is busy being ticked for a concrete.
+    if (ui.page.ingredients && !ui.concreteDraft) ui.page.ingredients = id;
     if (draft.editing) {
       ui.openIngredients.add(id);
       commit((d) => {
-        d.ingredients = d.ingredients.map((i) => (i.id === id ? { ...i, ...fields } : i));
+        d.ingredients = d.ingredients.map((i) => (i.id === id ? withFields(i, fields) : i));
       });
     } else {
       ui.concreteDraft?.picked.add(id);
-      commit((d) => d.ingredients.push({ id, ...fields }));
+      commit((d) => d.ingredients.push(withFields({ id }, fields)));
     }
 
     const row = $(`.row[data-id="${CSS.escape(id)}"]`, els.ingredientList);
     revealRows([row]);
     flash(row);
-    const next = draft.editing ? $(".row-edit", row) : ui.concreteDraft ? $(".row-main", row) : els.addIngredient;
-    next.focus({ preventScroll: true });
+    const editKey = `[data-focus-key="edit:ingredient:${CSS.escape(id)}"]`;
+    const next = ui.concreteDraft
+      ? $(".row-main", row)
+      : draft.editing || ui.page.ingredients ? $(editKey) : els.addIngredient;
+    next?.focus({ preventScroll: true });
   }
 
   // Concretes that used it lose it too, and Undo puts it all back.
@@ -1108,6 +1242,7 @@
       fields: [
         field("Name", textField("concrete-name", draft, "name")),
         field("Description", textField("concrete-description", draft, "description", true)),
+        field("Notes", notesField("concrete-notes", draft)),
         iconField("concrete-icon", draft),
       ],
       onSave: saveConcreteDraft,
@@ -1126,6 +1261,7 @@
       fields: [
         field("Name", textField("ingredient-name", draft, "name")),
         field("Description", textField("ingredient-description", draft, "description", true)),
+        field("Notes", notesField("ingredient-notes", draft)),
         iconField("ingredient-icon", draft),
         field("Group (optional)", group,
           h("datalist", { id: "ingredient-group-options" }, groupNames.map((name) => h("option", { value: name })))),
@@ -1134,6 +1270,15 @@
       onCancel: closeIngredientDraft,
       extra: draft.editing ? altButton("Delete this ingredient", () => deleteIngredient(draft.editing)) : null,
     });
+  }
+
+  // Notes are the longer write-up on an item's page, so they get more room.
+  function notesField(id, draft) {
+    const control = textField(id, draft, "notes", true);
+    control.rows = 8;
+    control.maxLength = 20000;
+    control.placeholder = "Shown on its page, under See more";
+    return control;
   }
 
   function textField(id, draft, key, multiline = false) {
@@ -1292,8 +1437,8 @@
   // The first spot in the visible part of the paper, reading left to right and
   // top to bottom, where a card fits without touching another or the toolbar.
   function freeSpot(kind, ref) {
-    const width = kind === "concrete" ? GRID * 12 : GRID * 10;
-    const height = kind === "concrete" ? 100 + 22 * (findConcrete(ref)?.ingredients.length ?? 4) : 100;
+    const width = kind === "concrete" ? GRID * 12 : GRID * 5;
+    const height = kind === "concrete" ? 100 + 22 * (findConcrete(ref)?.ingredients.length ?? 4) : GRID * 6;
     const { scrollLeft, scrollTop, clientWidth } = els.paper;
     const frame = els.paper.getBoundingClientRect();
     const bar = els.toolbar.getBoundingClientRect();
@@ -1402,7 +1547,9 @@
     const row = event.target.closest(".row");
     if (!row) return;
     if (event.target.closest(".row-place")) place("concrete", row.dataset.id);
+    else if (event.target.closest(".row-more")) openPage("concretes", row.dataset.id);
     else if (event.target.closest(".row-edit")) openConcreteDraft(row.dataset.id);
+    else if (event.target.closest(".row-tools")) return;
     else select(ui.selectedId === row.dataset.id ? null : row.dataset.id);
   });
 
@@ -1410,11 +1557,22 @@
     const row = event.target.closest(".row");
     if (!row) return;
     if (event.target.closest(".row-place")) place("ingredient", row.dataset.id);
+    else if (event.target.closest(".row-more")) openPage("ingredients", row.dataset.id);
     else if (event.target.closest(".row-edit")) openIngredientDraft(row.dataset.id);
     else if (!event.target.closest("button.row-main")) return;
     else if (ui.concreteDraft) togglePick(row.dataset.id);
     else toggleOpen(row.dataset.id);
   });
+
+  for (const kind of KINDS) {
+    (kind === "concretes" ? els.concretePage : els.ingredientPage).addEventListener("click", (event) => {
+      const link = event.target.closest(".page-link");
+      if (event.target.closest(".page-back")) closePage(kind);
+      else if (event.target.closest(".row-edit")) {
+        (kind === "concretes" ? openConcreteDraft : openIngredientDraft)(ui.page[kind]);
+      } else if (link) openPage(link.dataset.kind, link.dataset.id);
+    });
+  }
 
   for (const list of [els.concreteList, els.ingredientList]) {
     list.addEventListener("dragstart", (event) => {
@@ -1444,10 +1602,12 @@
     event.preventDefault();
     const { kind, ref } = JSON.parse(data);
     const origin = els.sheet.getBoundingClientRect();
-    // Land the card with its top-left corner just up and left of the pointer.
+    // Land a concrete's card with its top-left corner just up and left of the
+    // pointer, and an ingredient's bubble centred on it.
+    const [dx, dy] = kind === "concrete" ? [GRID * 2, GRID] : [GRID * 2.5, GRID * 2];
     place(kind, ref, {
-      x: snap(event.clientX - origin.left - GRID * 2),
-      y: snap(event.clientY - origin.top - GRID),
+      x: snap(event.clientX - origin.left - dx),
+      y: snap(event.clientY - origin.top - dy),
     });
   });
 
@@ -1490,6 +1650,8 @@
       if (ui.concreteDraft) closeConcreteDraft();
       else if (ui.ingredientDraft) closeIngredientDraft();
       else if (ui.publishDraft) closePublishDraft();
+      else if (ui.page.ingredients) closePage("ingredients");
+      else if (ui.page.concretes) closePage("concretes");
       else if (ui.selectedId) select(null);
     }
   });

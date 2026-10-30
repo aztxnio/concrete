@@ -12,6 +12,8 @@
 // image data URL. Without one, the item shows a plain circle.
 // `group` is optional too. Ingredients that share a group are listed together
 // under that heading.
+// `notes` is optional as well: the longer write-up on the item's own page,
+// which opens from See more.
 
 const SEED = {
   concretes: [

@@ -13,6 +13,9 @@ hand. To change it:
    change one, click it in the list, then **Edit**. The edit form also has
    **Delete**, and Undo brings back anything deleted by mistake. Changes are
    saved in your browser as you go.
+
+   Each one also has its own page, opened with **See more**. The **Notes** box
+   in its form is the longer write-up shown there.
 2. Click **Publish**. It sits just above the toolbar and shows how many
    changes haven't been published yet.
 3. The first time, it asks for the GitHub project and a key (see below). On the
