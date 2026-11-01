@@ -809,10 +809,9 @@
     els.sheet.style.height = `${bottom + GRID * 8}px`;
   }
 
+  // Everything on the paper is its bubble, with its name underneath to say what it is.
   function cardFor(item) {
-    const concrete = item.kind === "concrete" ? findConcrete(item.ref) : null;
-    const ingredient = item.kind === "ingredient" ? findIngredient(item.ref) : null;
-    const thing = concrete ?? ingredient;
+    const thing = item.kind === "concrete" ? findConcrete(item.ref) : findIngredient(item.ref);
     if (!thing) return null;
 
     const attrs = {
@@ -834,20 +833,9 @@
         "aria-label": `Remove ${thing.name} from the paper`,
       },
       icon("cross"));
-    const description = thing.description ? h("p", { class: "card-desc" }, thing.description) : null;
-
-    if (concrete) {
-      return h("div", attrs,
-        h("div", { class: "card-head" }, bubble(concrete), h("span", { class: "card-title" }, concrete.name), remove),
-        description,
-        h("ul", { class: "card-list" },
-          ingredientsOf(concrete).map((i) =>
-            h("li", { "data-ingredient": i.id }, bubble(i), h("span", { class: "card-item" }, i.name)))));
-    }
-    // An ingredient is its bubble, with its name underneath to say what it is.
     return h("div", attrs,
-      bubble(ingredient),
-      h("span", { class: "card-label" }, ingredient.name),
+      bubble(thing),
+      h("span", { class: "card-label" }, thing.name),
       remove);
   }
 
@@ -898,9 +886,6 @@
         ? card.dataset.ref === ui.selectedId
         : inMix.has(card.dataset.ref);
       card.classList.toggle("is-lit", lit);
-      for (const item of $$("[data-ingredient]", card)) {
-        item.classList.toggle("is-lit", inMix.has(item.dataset.ingredient));
-      }
     }
 
     const draft = ui.concreteDraft;
@@ -1427,7 +1412,7 @@
 
   function place(kind, ref, at) {
     const id = `card-${++cardCount}`;
-    const { x, y } = at ?? freeSpot(kind, ref);
+    const { x, y } = at ?? freeSpot(kind);
     commit((d) => d.canvas.push({ id, kind, ref, x, y }));
     const card = cardNode(id);
     if (!at) card.scrollIntoView({ block: "nearest", inline: "nearest", behavior: scrollBehavior() });
@@ -1436,9 +1421,9 @@
 
   // The first spot in the visible part of the paper, reading left to right and
   // top to bottom, where a card fits without touching another or the toolbar.
-  function freeSpot(kind, ref) {
-    const width = kind === "concrete" ? GRID * 12 : GRID * 5;
-    const height = kind === "concrete" ? 100 + 22 * (findConcrete(ref)?.ingredients.length ?? 4) : GRID * 6;
+  function freeSpot(kind) {
+    // A concrete's bubble is a size up from an ingredient's (see .card--concrete).
+    const [width, height] = kind === "concrete" ? [GRID * 6, GRID * 7] : [GRID * 5, GRID * 6];
     const { scrollLeft, scrollTop, clientWidth } = els.paper;
     const frame = els.paper.getBoundingClientRect();
     const bar = els.toolbar.getBoundingClientRect();
@@ -1602,9 +1587,8 @@
     event.preventDefault();
     const { kind, ref } = JSON.parse(data);
     const origin = els.sheet.getBoundingClientRect();
-    // Land a concrete's card with its top-left corner just up and left of the
-    // pointer, and an ingredient's bubble centred on it.
-    const [dx, dy] = kind === "concrete" ? [GRID * 2, GRID] : [GRID * 2.5, GRID * 2];
+    // Land the bubble centred on the pointer.
+    const [dx, dy] = kind === "concrete" ? [GRID * 3, GRID * 2.5] : [GRID * 2.5, GRID * 2];
     place(kind, ref, {
       x: snap(event.clientX - origin.left - dx),
       y: snap(event.clientY - origin.top - dy),

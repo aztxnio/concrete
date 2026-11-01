@@ -17,7 +17,6 @@
   --paper-text: oklch(0.5 0.012 93);
   --card: oklch(0.988 0.004 93);
   --card-ink: oklch(0.2 0.008 93);
-  --card-dim: oklch(0.48 0.01 93);
 
   --marker: oklch(0.88 0.175 93);
   --marker-hover: oklch(0.92 0.15 93);
@@ -785,12 +784,18 @@ textarea.draft-input {
   bottom: calc(44px * 2 + var(--space-md));
 }
 
-/* Cards on the paper ------------------------------------------------------ */
+/* On the paper ------------------------------------------------------------ */
+
+/* Everything on the paper is its bubble with its name underneath, a concrete's
+   bubble a size up from an ingredient's. The selected concrete and its mix get
+   a highlighter ring on the bubble and a highlighter band on the name. */
 
 .card {
   position: absolute;
-  background: var(--card);
-  border: 1px solid var(--card-ink);
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: calc(var(--grid) * 5);
   color: var(--card-ink);
   cursor: grab;
   touch-action: none;
@@ -798,15 +803,20 @@ textarea.draft-input {
   -webkit-user-select: none;
 }
 
-.card:focus {
-  outline: 2px solid var(--card-ink);
-  outline-offset: 3px;
+.card--concrete {
+  width: calc(var(--grid) * 6);
 }
 
-.card.is-dragging {
-  z-index: 1;
-  cursor: grabbing;
-  box-shadow: 6px 6px 0 oklch(0.2 0.008 93 / 0.14);
+.card .bubble {
+  --bubble: calc(var(--grid) * 4);
+  outline: 1px solid var(--card-ink);
+  outline-offset: -1px;
+  background: color-mix(in oklch, var(--card-ink) 8%, var(--card));
+  transition: box-shadow 160ms var(--ease-out);
+}
+
+.card--concrete .bubble {
+  --bubble: calc(var(--grid) * 5);
 }
 
 .card.is-new {
@@ -820,38 +830,17 @@ textarea.draft-input {
   }
 }
 
-.card-title {
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.card-head .bubble {
-  --bubble: 22px;
-}
-
-.card-desc {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-  margin: 0;
-  color: var(--card-dim);
-  font-size: var(--text-sm);
-  line-height: 1.45;
-}
-
 .card-remove {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: -4px;
+  right: 0;
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
   padding: 0;
   border: 0;
-  background: none;
+  background: var(--paper);
   color: inherit;
   opacity: 0;
   transition: opacity 120ms var(--ease-out);
@@ -872,75 +861,6 @@ textarea.draft-input {
   outline-offset: -2px;
 }
 
-/* A concrete card is a dark title band over its description and ingredients. */
-
-.card--concrete {
-  width: calc(var(--grid) * 12);
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 6px var(--space-xl) 6px var(--space-xs);
-  background: var(--card-ink);
-  color: var(--chalk);
-}
-
-.card--concrete .card-desc {
-  padding: var(--space-xs) var(--space-sm) 0;
-}
-
-.card-list {
-  padding: var(--space-xs) var(--space-sm) var(--space-sm);
-  font-size: var(--text-sm);
-  line-height: 1.55;
-}
-
-.card-list li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 1px 0;
-}
-
-.card-list .bubble {
-  --bubble: 16px;
-}
-
-/* Highlighter stroke across the lower part of the words, like on paper */
-.card-list .is-lit .card-item {
-  background-image: linear-gradient(transparent 40%, var(--marker) 40%, var(--marker) 92%, transparent 92%);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-}
-
-.card--concrete.is-lit .card-head {
-  background: var(--marker);
-  color: var(--marker-ink);
-}
-
-/* An ingredient on the paper is its bubble, with its name underneath. In a
-   selected concrete's mix, the bubble gets a highlighter ring and the name a
-   highlighter band. */
-
-.card--ingredient {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  width: calc(var(--grid) * 5);
-  border: 0;
-  background: none;
-}
-
-.card--ingredient .bubble {
-  --bubble: calc(var(--grid) * 4);
-  outline: 1px solid var(--card-ink);
-  outline-offset: -1px;
-  background: color-mix(in oklch, var(--card-ink) 8%, var(--card));
-  transition: box-shadow 160ms var(--ease-out);
-}
-
 .card-label {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -957,39 +877,34 @@ textarea.draft-input {
   overflow-wrap: anywhere;
 }
 
-.card--ingredient.is-lit .bubble {
+.card.is-lit .bubble {
   box-shadow: 0 0 0 4px var(--marker);
 }
 
-.card--ingredient.is-lit .card-label {
+.card.is-lit .card-label {
   background: var(--marker);
   color: var(--marker-ink);
 }
 
-.card--ingredient:focus {
+.card:focus {
   outline: none;
 }
 
-.card--ingredient:focus .bubble {
+.card:focus .bubble {
   box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--card-ink);
 }
 
-.card--ingredient.is-lit:focus .bubble {
+.card.is-lit:focus .bubble {
   box-shadow: 0 0 0 4px var(--marker), 0 0 0 6px var(--card-ink);
 }
 
-.card--ingredient.is-dragging {
-  box-shadow: none;
+.card.is-dragging {
+  z-index: 1;
+  cursor: grabbing;
 }
 
-.card--ingredient.is-dragging .bubble {
+.card.is-dragging .bubble {
   box-shadow: 5px 5px 0 oklch(0.2 0.008 93 / 0.14);
-}
-
-.card--ingredient .card-remove {
-  top: -4px;
-  right: 0;
-  background: var(--paper);
 }
 
 /* Toolbar: part of the frame, notched into the paper's bottom-left corner */
