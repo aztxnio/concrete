@@ -144,6 +144,107 @@ svg {
   letter-spacing: 0.01em;
 }
 
+/* Tags: filters above a list, and on an item's row, page and form */
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+.tag {
+  min-height: 28px;
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid color-mix(in oklch, currentColor 30%, transparent);
+  background: none;
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.tag:hover {
+  border-color: currentColor;
+}
+
+.tag:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+.tag[aria-pressed="true"] {
+  border-color: var(--chalk);
+  background: var(--chalk);
+  color: var(--ink);
+}
+
+/* Search and tag filters, above each list */
+
+.panel-filter {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--gutter) var(--space-sm);
+  border-bottom: 1px solid var(--ink-line);
+}
+
+.panel-filter[hidden] {
+  display: none;
+}
+
+.panel-filter[inert] {
+  opacity: 0.35;
+}
+
+.panel-search {
+  appearance: none;
+}
+
+.panel-search::placeholder {
+  color: var(--chalk-dim);
+  opacity: 1;
+}
+
+/* Three rows of tags at most, so the list keeps its room. */
+.filter-tags {
+  max-height: calc(28px * 3 + var(--space-2xs) * 2);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-line) transparent;
+}
+
+.filter-tags:empty {
+  display: none;
+}
+
+.filter-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin: 0;
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+}
+
+.filter-status[hidden] {
+  display: none;
+}
+
+.filter-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--chalk);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.filter-clear:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
 .panel-scroll {
   flex: 1;
   min-height: 0;
@@ -296,11 +397,18 @@ button.row-main:hover {
 }
 
 .row.is-open:not(.is-lit) .row-main,
+.row.is-open:not(.is-lit) .row-tags,
 .row.is-open:not(.is-lit) .row-tools {
   background: var(--ink-raised);
 }
 
-/* The selected concrete, and the ingredients that go into it */
+/* The selected concrete, and the ingredients that go into it. The row itself is
+   filled too, so no hairline shows between its parts. */
+
+.row.is-selected,
+.row.is-lit {
+  background: var(--marker);
+}
 
 .row.is-selected .row-main,
 .row.is-lit .row-main {
@@ -329,7 +437,12 @@ button.row-main:hover {
   outline-color: var(--marker-ink);
 }
 
-/* See more and Edit, under a selected concrete or an opened ingredient */
+/* Its tags, See more and Edit, under a selected concrete or an opened ingredient */
+
+.row-tags {
+  display: none;
+  padding: 0 var(--space-2xl) var(--space-xs) calc(var(--gutter) + var(--bubble) + var(--space-sm));
+}
 
 .row-tools {
   display: none;
@@ -337,15 +450,31 @@ button.row-main:hover {
   padding: 0 var(--space-2xl) var(--space-sm) calc(var(--gutter) + var(--bubble) + var(--space-sm));
 }
 
+.row.is-selected .row-tags,
+.row.is-open .row-tags,
 .row.is-selected .row-tools,
 .row.is-open .row-tools {
   display: flex;
 }
 
+.row.is-selected .row-tags,
+.row.is-lit .row-tags,
 .row.is-selected .row-tools,
 .row.is-lit .row-tools {
   background: var(--marker);
   color: var(--marker-ink);
+}
+
+.row.is-selected .tag[aria-pressed="true"],
+.row.is-lit .tag[aria-pressed="true"] {
+  border-color: var(--marker-ink);
+  background: var(--marker-ink);
+  color: var(--marker);
+}
+
+.row.is-selected .tag:focus-visible,
+.row.is-lit .tag:focus-visible {
+  outline-color: var(--marker-ink);
 }
 
 .row-action {
@@ -709,22 +838,42 @@ textarea.draft-input {
   box-shadow: inset 0 0 0 2px var(--card-ink);
 }
 
+/* app.js handles fingers on the paper itself: drag to move around, pinch to zoom. */
 .paper {
   position: absolute;
   inset: 0;
   overflow: auto;
   outline: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-/* Dots sit exactly on multiples of --grid, where card corners snap. */
+/* Dots sit exactly on multiples of --grid, where card corners snap. app.js
+   changes --dot-step as the zoom changes. */
 .sheet {
+  --dot-step: var(--grid);
   position: relative;
   min-width: 100%;
   min-height: 100%;
   background-color: var(--paper);
   background-image: radial-gradient(circle, var(--paper-dot) 1.1px, transparent 1.6px);
-  background-position: calc(var(--grid) / -2) calc(var(--grid) / -2);
-  background-size: var(--grid) var(--grid);
+  background-position: calc(var(--dot-step) / -2) calc(var(--dot-step) / -2);
+  background-size: var(--dot-step) var(--dot-step);
+  cursor: grab;
+}
+
+.is-panning .paper,
+.is-panning .sheet {
+  cursor: grabbing;
+}
+
+/* The layer the cards sit on, which is what zooming scales. */
+.cards {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }
 
 .workspace.is-drop-target .sheet {
@@ -830,20 +979,27 @@ textarea.draft-input {
   }
 }
 
+/* Just clear of the bubble's edge, with a bigger area to press than it looks. */
 .card-remove {
   position: absolute;
-  top: -4px;
-  right: 0;
+  top: -8px;
+  right: -2px;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
-  background: var(--paper);
+  background: none;
   color: inherit;
   opacity: 0;
   transition: opacity 120ms var(--ease-out);
+}
+
+.card-remove::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 .card:hover .card-remove,
@@ -1017,10 +1173,39 @@ textarea.draft-input {
   }
 }
 
-/* When the paper is too narrow for the full labels, the toolbar runs its whole
-   width with short ones. */
+/* Zoom: the toolbar's counterpart, notched into the paper's bottom-right corner */
 
-@container (max-width: 480px) {
+.zoom {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  border-top: 1px solid var(--ink-edge);
+  border-left: 1px solid var(--ink-edge);
+  background: var(--ink);
+  color: var(--chalk);
+  color-scheme: dark;
+}
+
+.zoom-level {
+  width: 56px;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* When the paper is too narrow for the toolbar's full labels beside the zoom,
+   the toolbar runs its whole width with short ones and the zoom sits on top. */
+
+@container (max-width: 600px) {
+  .zoom {
+    bottom: 45px;
+  }
+
+  .toast {
+    bottom: calc(44px * 2 + var(--space-md));
+  }
+
   .toolbar {
     right: 0;
     border-right: 0;
@@ -1088,9 +1273,24 @@ textarea.draft-input {
     padding-right: 40px;
   }
 
+  .row-tags,
   .row-tools {
     padding-right: 40px;
     padding-left: calc(var(--gutter) + var(--bubble) + var(--space-xs));
+  }
+
+  /* One row of tags to swipe along, since the lists are short here. */
+  .filter-tags {
+    flex-wrap: nowrap;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .filter-tags .tag {
+    flex: none;
+    white-space: nowrap;
   }
 
   .row-place {

@@ -11,6 +11,9 @@
   const PUBLISH_STORAGE_KEY = "concrete-publish"; // the GitHub project and key, kept apart from the data
   const ICON_SIZE = 160; // icons are stored as squares this many pixels wide, sharp in the big bubbles
   const KINDS = ["concretes", "ingredients"];
+  const MIN_ZOOM = 0.25;
+  const MAX_ZOOM = 3;
+  const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3]; // where the + and - buttons stop
   const DRAG_TYPE = "application/x-concrete-item";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -31,6 +34,7 @@
     workspace: $("#workspace"),
     paper: $("#paper"),
     sheet: $("#sheet"),
+    cards: $("#cards"),
     emptyHint: $("#empty-hint"),
     toast: $("#toast"),
     toolbar: $("#toolbar"),
@@ -43,6 +47,15 @@
     publishLabel: $("#publish-label"),
     publishCount: $("#publish-count"),
     publishDraft: $("#publish-draft"),
+    zoom: $("#zoom"),
+    zoomOut: $("#zoom-out"),
+    zoomLevel: $("#zoom-level"),
+    zoomIn: $("#zoom-in"),
+  };
+
+  const panels = {
+    concretes: { page: els.concretePage, list: els.concreteList, filter: $("#concrete-filter") },
+    ingredients: { page: els.ingredientPage, list: els.ingredientList, filter: $("#ingredient-filter") },
   };
 
   const seed = { concretes: SEED.concretes ?? [], ingredients: SEED.ingredients ?? [] };
@@ -67,14 +80,20 @@
     selectedId: null,
     openIngredients: new Set(),
     // The forms. `editing` is the id of the item being edited, or null for a new one.
-    concreteDraft: null, // { editing, name, description, icon, picked: Set of ingredient ids, error }
-    ingredientDraft: null, // { editing, name, description, icon, group, error }
+    concreteDraft: null, // { editing, name, description, notes, tags, icon, picked: Set of ingredient ids, error }
+    ingredientDraft: null, // { editing, name, description, notes, tags, icon, group, error }
     publishDraft: null, // { project, key, error }
     publishing: false,
     // The item each panel is showing as a page, from See more, and where its
     // list was scrolled to before.
     page: { concretes: null, ingredients: null },
     pageScroll: { concretes: 0, ingredients: 0 },
+    // What each list is narrowed down to. `tags` holds them in lowercase.
+    filters: {
+      concretes: { text: "", tags: new Set() },
+      ingredients: { text: "", tags: new Set() },
+    },
+    zoom: 1,
   };
 
   let cardCount = highestCardNumber();
@@ -88,6 +107,7 @@
   const ingredientsOf = (concrete) => concrete.ingredients.map(findIngredient).filter(Boolean);
   const pickedIds = (draft) => doc.ingredients.filter((i) => draft.picked.has(i.id)).map((i) => i.id);
   const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const tagsOf = (item) => (Array.isArray(item?.tags) ? item.tags.map(String) : []);
   const snap = (n) => Math.max(0, Math.round(n / GRID) * GRID);
   const scrollBehavior = () => (reducedMotion.matches ? "auto" : "smooth");
   const isEnabled = (button) => button.getAttribute("aria-disabled") !== "true";
@@ -292,6 +312,8 @@
     "// under that heading.",
     "// `notes` is optional as well: the longer write-up on the item's own page,",
     "// which opens from See more.",
+    "// `tags` is optional too: a list of words to search and filter by, like",
+    "// [\"Structural\", \"Low carbon\"].",
   ];
 
   // { project: "owner/name", key } for this browser, or null before the first publish.
@@ -665,22 +687,28 @@
 
   function render() {
     if (ui.selectedId && !findConcrete(ui.selectedId)) ui.selectedId = null;
+    keepingFocus(() => {
+      renderFilters();
+      renderConcretes();
+      renderIngredients();
+      renderDrafts();
+      renderPages();
+      renderCanvas();
+      renderToolbar();
+      paint();
+    });
+  }
+
+  // Rebuilding a list loses focus, so put it back on the same control afterwards.
+  function keepingFocus(draw) {
     const focusKey = document.activeElement?.dataset?.focusKey;
-
-    renderConcretes();
-    renderIngredients();
-    renderDrafts();
-    renderPages();
-    renderCanvas();
-    renderToolbar();
-    paint();
-
+    draw();
     if (focusKey) $(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   function renderConcretes() {
     els.concreteList.replaceChildren(
-      ...doc.concretes.map((c) =>
+      ...doc.concretes.filter((c) => matchesFilter("concretes", c)).map((c) =>
         h("li", { class: "row", draggable: "true", "data-kind": "concrete", "data-id": c.id },
           h("button", { type: "button", class: "row-main", "aria-pressed": "false", "data-focus-key": `concrete:${c.id}` },
             bubble(c),
@@ -690,14 +718,19 @@
               String(ingredientsOf(c).length),
               h("span", { class: "sr-only" }, " ingredients"))),
           placeButton("concrete", c),
+          rowTags("concretes", c),
           rowTools("concrete", c))));
   }
 
   function renderIngredients() {
     const picking = Boolean(ui.concreteDraft);
     els.ingredientList.classList.toggle("is-picking", picking);
+    // Filtered within the groups, so that they stay in the same order.
+    const groups = ingredientGroups()
+      .map((group) => ({ ...group, items: group.items.filter((i) => matchesFilter("ingredients", i)) }))
+      .filter((group) => group.items.length);
     els.ingredientList.replaceChildren(
-      ...ingredientGroups().map((group, index) => {
+      ...groups.map((group, index) => {
         const list = h("ul", { class: "list" }, group.items.map((i) => ingredientRow(i, picking)));
         if (!group.name) return list;
         return h("section", { class: "group", "aria-labelledby": `group-${index}` },
@@ -740,6 +773,7 @@
     return h("li", { class: "row", draggable: "true", "data-kind": "ingredient", "data-id": ingredient.id },
       main,
       placeButton("ingredient", ingredient),
+      picking ? null : rowTags("ingredients", ingredient),
       picking || ui.ingredientDraft ? null : rowTools("ingredient", ingredient));
   }
 
@@ -754,7 +788,14 @@
       icon("plus"));
   }
 
-  // Shown under a selected concrete or an opened ingredient: its page, and Edit.
+  // Shown under a selected concrete or an opened ingredient: its tags, its page, and Edit.
+  function rowTags(kind, item) {
+    const tags = tagsOf(item);
+    if (!tags.length) return null;
+    return h("div", { class: "row-tags tag-row" },
+      tags.map((tag) => tagButton(kind, tag, `tag:${kind}:${item.id}:${tag}`)));
+  }
+
   function rowTools(kind, item) {
     return h("div", { class: "row-tools" },
       h("button", {
@@ -784,6 +825,7 @@
     syncDraft(els.concreteDraft, ui.concreteDraft, concreteDraftForm);
     syncDraft(els.ingredientDraft, ui.ingredientDraft, ingredientDraftForm);
     els.concreteList.inert = Boolean(ui.concreteDraft);
+    panels.concretes.filter.inert = Boolean(ui.concreteDraft);
   }
 
   function syncDraft(host, draft, build) {
@@ -792,21 +834,25 @@
   }
 
   function renderCanvas() {
-    els.sheet.replaceChildren(...doc.canvas.map(cardFor).filter(Boolean));
+    els.cards.replaceChildren(...doc.canvas.map(cardFor).filter(Boolean));
     els.emptyHint.hidden = doc.canvas.length > 0;
     fitSheet();
   }
 
   // Grow the sheet past the furthest card so there's always paper to drag onto.
+  // Zoomed in, it's at least the view's size at 100%, so any spot can stay put
+  // under the pointer while zooming.
   function fitSheet() {
     let right = 0;
     let bottom = 0;
-    for (const node of els.sheet.children) {
+    for (const node of els.cards.children) {
       right = Math.max(right, node.offsetLeft + node.offsetWidth);
       bottom = Math.max(bottom, node.offsetTop + node.offsetHeight);
     }
-    els.sheet.style.width = `${right + GRID * 8}px`;
-    els.sheet.style.height = `${bottom + GRID * 8}px`;
+    const { clientWidth, clientHeight } = els.paper;
+    const room = Math.max(ui.zoom, 1);
+    els.sheet.style.width = `${Math.max((right + GRID * 8) * ui.zoom, clientWidth * room)}px`;
+    els.sheet.style.height = `${Math.max((bottom + GRID * 8) * ui.zoom, clientHeight * room)}px`;
   }
 
   // Everything on the paper is its bubble, with its name underneath to say what it is.
@@ -881,7 +927,7 @@
       else if (main.hasAttribute("aria-expanded")) main.setAttribute("aria-expanded", String(open));
     }
 
-    for (const card of els.sheet.children) {
+    for (const card of els.cards.children) {
       const lit = card.dataset.kind === "concrete"
         ? card.dataset.ref === ui.selectedId
         : inMix.has(card.dataset.ref);
@@ -956,13 +1002,100 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Filtering
+  //
+  // Each list has a search box and a button for every tag used in it. Clicking
+  // several tags narrows the list to the items that have all of them.
+
+  function matchesFilter(kind, item) {
+    const { text, tags } = ui.filters[kind];
+    const own = new Set(tagsOf(item).map((tag) => tag.toLowerCase()));
+    if ([...tags].some((tag) => !own.has(tag))) return false;
+    const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const mix = kind === "concretes" ? ingredientsOf(item).map((i) => i.name) : [];
+    const searched = [item.name, item.description, item.notes, item.group, ...tagsOf(item), ...mix].join(" ").toLowerCase();
+    return words.every((word) => searched.includes(word));
+  }
+
+  // Every tag used in a list, alphabetically, in the spelling it first appears
+  // in, keyed by lowercase.
+  function knownTags(kind, exceptId = null) {
+    const tags = new Map();
+    for (const item of doc[kind]) {
+      if (item.id === exceptId) continue;
+      for (const tag of tagsOf(item)) {
+        const key = tag.toLowerCase();
+        if (!tags.has(key)) tags.set(key, tag);
+      }
+    }
+    return new Map([...tags].sort((a, b) => a[1].localeCompare(b[1])));
+  }
+
+  // A tag that filters its list when clicked, and shows as pressed while it does.
+  function tagButton(kind, tag, focusKey) {
+    const key = tag.toLowerCase();
+    return h("button", {
+        type: "button",
+        class: "tag",
+        "aria-pressed": String(ui.filters[kind].tags.has(key)),
+        "data-tag": key,
+        "data-focus-key": focusKey,
+      },
+      tag);
+  }
+
+  function renderFilters() {
+    for (const kind of KINDS) {
+      const filter = ui.filters[kind];
+      const known = knownTags(kind);
+      // A tag goes away when the last item using it changes.
+      for (const tag of filter.tags) {
+        if (!known.has(tag)) filter.tags.delete(tag);
+      }
+      const bar = panels[kind].filter;
+      $(".filter-tags", bar).replaceChildren(
+        ...[...known.values()].map((tag) => tagButton(kind, tag, `filter:${kind}:${tag}`)));
+      const filtering = filter.tags.size > 0 || filter.text.trim() !== "";
+      const status = $(".filter-status", bar);
+      status.hidden = !filtering;
+      if (filtering) {
+        const shown = doc[kind].filter((item) => matchesFilter(kind, item)).length;
+        status.firstElementChild.textContent = shown ? `${shown} of ${doc[kind].length}` : "Nothing matches";
+      }
+    }
+  }
+
+  // Only the lists change, so the paper isn't redrawn on every key pressed.
+  function refreshLists() {
+    keepingFocus(() => {
+      renderFilters();
+      renderConcretes();
+      renderIngredients();
+      paint();
+    });
+  }
+
+  function toggleFilterTag(kind, tag) {
+    const { tags } = ui.filters[kind];
+    if (tags.has(tag)) tags.delete(tag);
+    else tags.add(tag);
+    refreshLists();
+  }
+
+  function clearFilter(kind) {
+    ui.filters[kind] = { text: "", tags: new Set() };
+    $(".panel-search", panels[kind].filter).value = "";
+  }
+
+  // ---------------------------------------------------------------------------
   // Pages
   //
   // See more turns a panel into a page about one item: its picture, description,
   // what it's made of or used in, and notes. For now the notes are free text.
 
   function openPage(kind, id) {
-    const box = (kind === "concretes" ? els.concretePage : els.ingredientPage).closest(".panel-scroll");
+    const box = panels[kind].page.closest(".panel-scroll");
     if (!ui.page[kind]) ui.pageScroll[kind] = box.scrollTop;
     ui.page[kind] = id;
     if (kind === "concretes") ui.selectedId = id;
@@ -977,8 +1110,7 @@
     const id = ui.page[kind];
     ui.page[kind] = null;
     render();
-    const box = (kind === "concretes" ? els.concretePage : els.ingredientPage).closest(".panel-scroll");
-    box.scrollTop = ui.pageScroll[kind];
+    panels[kind].page.closest(".panel-scroll").scrollTop = ui.pageScroll[kind];
     $(`[data-focus-key="more:${singular(kind)}:${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
   }
 
@@ -986,15 +1118,15 @@
   // a concrete's ingredients) or the page's own item is being edited.
   function renderPages() {
     for (const kind of KINDS) {
-      const host = kind === "concretes" ? els.concretePage : els.ingredientPage;
-      const list = kind === "concretes" ? els.concreteList : els.ingredientList;
+      const { page, list, filter } = panels[kind];
       const item = ui.page[kind] ? findItem(kind, ui.page[kind]) : null;
       if (!item) ui.page[kind] = null;
       const picking = kind === "ingredients" && Boolean(ui.concreteDraft);
       const editing = Boolean(kind === "concretes" ? ui.concreteDraft : ui.ingredientDraft);
-      host.replaceChildren(...(item ? [pageFor(kind, item)] : []));
-      host.hidden = !item || picking || editing;
+      page.replaceChildren(...(item ? [pageFor(kind, item)] : []));
+      page.hidden = !item || picking || editing;
       list.hidden = Boolean(item) && !picking;
+      filter.hidden = list.hidden;
     }
   }
 
@@ -1002,6 +1134,7 @@
     const concrete = kind === "concretes";
     const related = concrete ? ingredientsOf(item) : doc.concretes.filter((c) => c.ingredients.includes(item.id));
     const notes = item.notes?.trim();
+    const tags = tagsOf(item);
     return h("article", { class: "page", "aria-labelledby": `${kind}-page-title` },
       h("button", { type: "button", class: "page-back", "data-focus-key": `back:${kind}` },
         icon("back"),
@@ -1010,6 +1143,11 @@
         bubble(item),
         h("h3", { class: "page-title", id: `${kind}-page-title` }, item.name)),
       item.description ? h("p", { class: "page-desc" }, item.description) : null,
+      tags.length
+        ? h("section", { class: "page-section" },
+            h("h4", { class: "page-label" }, "Tags"),
+            h("div", { class: "tag-row" }, tags.map((tag) => tagButton(kind, tag, `page-tag:${kind}:${tag}`))))
+        : null,
       related.length
         ? h("section", { class: "page-section" },
             h("h4", { class: "page-label" }, concrete ? "Ingredients" : "Used in"),
@@ -1048,6 +1186,7 @@
         name: concrete?.name ?? "",
         description: concrete?.description ?? "",
         notes: concrete?.notes ?? "",
+        tags: tagsOf(concrete).join(", "),
         icon: concrete?.icon ?? "",
         picked: new Set(concrete?.ingredients),
         error: "",
@@ -1064,7 +1203,7 @@
     ui.concreteDraft = null;
     if (id) ui.selectedId = id;
     render();
-    (id ? $(`[data-focus-key="edit:concrete:${CSS.escape(id)}"]`) : els.addConcrete).focus();
+    (id ? $(`[data-focus-key="edit:concrete:${CSS.escape(id)}"]`) : els.addConcrete)?.focus();
   }
 
   function togglePick(id) {
@@ -1092,18 +1231,26 @@
       return;
     }
 
-    const fields = { name, description: draft.description.trim(), notes: draft.notes.trim(), icon: draft.icon, ingredients };
     const id = draft.editing ?? uniqueId(name, doc.concretes);
+    const item = withFields(draft.editing ? findConcrete(id) : { id }, {
+      name,
+      description: draft.description.trim(),
+      notes: draft.notes.trim(),
+      tags: parseTags(draft.tags, "concretes", draft.editing),
+      icon: draft.icon,
+      ingredients,
+    });
     ui.concreteDraft = null;
     ui.selectedId = id;
     // A concrete page that was open shows the one just saved.
     if (ui.page.concretes) ui.page.concretes = id;
+    if (!matchesFilter("concretes", item)) clearFilter("concretes");
     if (draft.editing) {
       commit((d) => {
-        d.concretes = d.concretes.map((c) => (c.id === id ? withFields(c, fields) : c));
+        d.concretes = d.concretes.map((c) => (c.id === id ? item : c));
       });
     } else {
-      commit((d) => d.concretes.push(withFields({ id }, fields)));
+      commit((d) => d.concretes.push(item));
     }
 
     const row = $(`.row[data-id="${CSS.escape(id)}"]`, els.concreteList);
@@ -1113,12 +1260,27 @@
     revealRows($$(".row.is-lit", els.ingredientList));
   }
 
-  // An item with a form's fields, leaving out empty notes it never had, so that
-  // saving without a change doesn't count as one.
+  // An item with a form's fields, leaving out empty notes or tags it never had,
+  // so that saving without a change doesn't count as one.
   function withFields(item, fields) {
     const next = { ...item, ...fields };
-    if (!fields.notes && !Object.hasOwn(item, "notes")) delete next.notes;
+    for (const key of ["notes", "tags"]) {
+      if (!fields[key].length && !Object.hasOwn(item, key)) delete next[key];
+    }
     return next;
+  }
+
+  // Tags as typed, with commas between them, in the spelling already in use for
+  // any that are on another item, so one tag doesn't become two.
+  function parseTags(text, kind, exceptId) {
+    const known = knownTags(kind, exceptId);
+    const tags = new Map();
+    for (const part of text.split(",")) {
+      const tag = part.trim();
+      const key = tag.toLowerCase();
+      if (tag && !tags.has(key)) tags.set(key, known.get(key) ?? tag);
+    }
+    return [...tags.values()];
   }
 
   function deleteConcrete(id) {
@@ -1140,6 +1302,7 @@
         name: ingredient?.name ?? "",
         description: ingredient?.description ?? "",
         notes: ingredient?.notes ?? "",
+        tags: tagsOf(ingredient).join(", "),
         icon: ingredient?.icon ?? "",
         group: ingredient?.group ?? "",
         error: "",
@@ -1154,7 +1317,7 @@
     const id = ui.ingredientDraft.editing;
     ui.ingredientDraft = null;
     render();
-    (id ? $(`[data-focus-key="edit:ingredient:${CSS.escape(id)}"]`) : els.addIngredient).focus();
+    (id ? $(`[data-focus-key="edit:ingredient:${CSS.escape(id)}"]`) : els.addIngredient)?.focus();
   }
 
   async function saveIngredientDraft() {
@@ -1172,26 +1335,28 @@
       return;
     }
 
-    const fields = {
+    const id = draft.editing ?? uniqueId(name, doc.ingredients);
+    const item = withFields(draft.editing ? findIngredient(id) : { id }, {
       name,
       description: draft.description.trim(),
       notes: draft.notes.trim(),
+      tags: parseTags(draft.tags, "ingredients", draft.editing),
       icon: draft.icon,
       group: draft.group.trim(),
-    };
-    const id = draft.editing ?? uniqueId(name, doc.ingredients);
+    });
     ui.ingredientDraft = null;
     // An ingredient page that was open shows the one just saved, unless the list
     // is busy being ticked for a concrete.
     if (ui.page.ingredients && !ui.concreteDraft) ui.page.ingredients = id;
+    if (!matchesFilter("ingredients", item)) clearFilter("ingredients");
     if (draft.editing) {
       ui.openIngredients.add(id);
       commit((d) => {
-        d.ingredients = d.ingredients.map((i) => (i.id === id ? withFields(i, fields) : i));
+        d.ingredients = d.ingredients.map((i) => (i.id === id ? item : i));
       });
     } else {
       ui.concreteDraft?.picked.add(id);
-      commit((d) => d.ingredients.push(withFields({ id }, fields)));
+      commit((d) => d.ingredients.push(item));
     }
 
     const row = $(`.row[data-id="${CSS.escape(id)}"]`, els.ingredientList);
@@ -1228,6 +1393,7 @@
         field("Name", textField("concrete-name", draft, "name")),
         field("Description", textField("concrete-description", draft, "description", true)),
         field("Notes", notesField("concrete-notes", draft)),
+        tagsField("concrete-tags", draft, "concretes"),
         iconField("concrete-icon", draft),
       ],
       onSave: saveConcreteDraft,
@@ -1247,6 +1413,7 @@
         field("Name", textField("ingredient-name", draft, "name")),
         field("Description", textField("ingredient-description", draft, "description", true)),
         field("Notes", notesField("ingredient-notes", draft)),
+        tagsField("ingredient-tags", draft, "ingredients"),
         iconField("ingredient-icon", draft),
         field("Group (optional)", group,
           h("datalist", { id: "ingredient-group-options" }, groupNames.map((name) => h("option", { value: name })))),
@@ -1264,6 +1431,37 @@
     control.maxLength = 20000;
     control.placeholder = "Shown on its page, under See more";
     return control;
+  }
+
+  // Tags are typed with commas between them. The ones already in use on other
+  // items are there to click, which keeps their spelling the same.
+  function tagsField(id, draft, kind) {
+    const input = textField(id, draft, "tags");
+    input.maxLength = 500;
+    input.placeholder = "Separate with commas";
+    const typed = () => draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+    const offers = [...knownTags(kind, draft.editing).values()].map((tag) =>
+      h("button", {
+          type: "button",
+          class: "tag",
+          onclick: () => {
+            const current = typed();
+            const others = current.filter((other) => !sameName(other, tag));
+            draft.tags = (others.length < current.length ? others : [...current, tag]).join(", ");
+            input.value = draft.tags;
+            showPressed();
+          },
+        },
+        tag));
+    const showPressed = () => {
+      const current = typed();
+      for (const offer of offers) {
+        offer.setAttribute("aria-pressed", String(current.some((tag) => sameName(tag, offer.textContent))));
+      }
+    };
+    input.addEventListener("input", showPressed);
+    showPressed();
+    return field("Tags (optional)", input, offers.length ? h("div", { class: "tag-row" }, offers) : null);
   }
 
   function textField(id, draft, key, multiline = false) {
@@ -1426,23 +1624,30 @@
     const [width, height] = kind === "concrete" ? [GRID * 6, GRID * 7] : [GRID * 5, GRID * 6];
     const { scrollLeft, scrollTop, clientWidth } = els.paper;
     const frame = els.paper.getBoundingClientRect();
-    const bar = els.toolbar.getBoundingClientRect();
-    // Publish sits on top of the toolbar when it's showing.
-    const barTop = els.publish.hidden ? bar.top : els.publish.getBoundingClientRect().top;
+    // Where a control sits over the paper, in the paper's own units.
+    const onPaper = (node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        x: (scrollLeft + box.left - frame.left) / ui.zoom,
+        y: (scrollTop + box.top - frame.top) / ui.zoom,
+        w: box.width / ui.zoom,
+        h: box.height / ui.zoom,
+      };
+    };
     const taken = [
       ...doc.canvas.map((item) => {
         const node = cardNode(item.id);
         return { x: item.x, y: item.y, w: node?.offsetWidth ?? 0, h: node?.offsetHeight ?? 0 };
       }),
-      { x: scrollLeft + bar.left - frame.left, y: scrollTop + barTop - frame.top, w: bar.width, h: bar.bottom - barTop },
+      ...[els.toolbar, els.publish, els.zoom].filter((node) => !node.hidden).map(onPaper),
     ];
     const fits = (x, y) =>
       taken.every((r) =>
         x >= r.x + r.w + GRID || x + width + GRID <= r.x || y >= r.y + r.h + GRID || y + height + GRID <= r.y);
 
-    const left = snap(scrollLeft) + GRID * 2;
-    const top = snap(scrollTop) + GRID * 2;
-    const right = Math.max(left, scrollLeft + clientWidth - width - GRID * 2);
+    const left = snap(scrollLeft / ui.zoom) + GRID * 2;
+    const top = snap(scrollTop / ui.zoom) + GRID * 2;
+    const right = Math.max(left, (scrollLeft + clientWidth) / ui.zoom - width - GRID * 2);
     for (let y = top; y < top + GRID * 400; y += GRID) {
       for (let x = left; x <= right; x += GRID) {
         if (fits(x, y)) return { x, y };
@@ -1452,7 +1657,7 @@
   }
 
   function removeCard(id, keepFocusOnCards) {
-    const nodes = [...els.sheet.children];
+    const nodes = [...els.cards.children];
     const index = nodes.findIndex((node) => node.dataset.id === id);
     const neighbour = (nodes[index + 1] ?? nodes[index - 1])?.dataset.id;
     commit((d) => {
@@ -1464,7 +1669,7 @@
 
   function onCardPointerDown(event) {
     const card = event.target.closest(".card");
-    if (!card || event.button !== 0 || event.target.closest(".card-remove")) return;
+    if (pinch || !card || event.button !== 0 || event.target.closest(".card-remove")) return;
     event.preventDefault();
     card.focus({ preventScroll: true });
 
@@ -1481,22 +1686,34 @@
       if (!moved && Math.hypot(dx, dy) < 4) return;
       moved = true;
       card.classList.add("is-dragging");
-      to = { x: snap(item.x + dx), y: snap(item.y + dy) };
+      to = { x: snap(item.x + dx / ui.zoom), y: snap(item.y + dy / ui.zoom) };
       card.style.left = `${to.x}px`;
       card.style.top = `${to.y}px`;
     }, { signal: done.signal });
 
-    const finish = () => {
+    const stop = () => {
       done.abort();
+      cancelCardDrag = null;
       card.classList.remove("is-dragging");
+    };
+    // A second finger coming down turns the gesture into a pinch instead.
+    cancelCardDrag = () => {
+      stop();
+      card.style.left = `${item.x}px`;
+      card.style.top = `${item.y}px`;
+    };
+    const finish = () => {
+      stop();
       if (moved && (to.x !== item.x || to.y !== item.y)) {
         // A moved card goes to the end of the list so it draws on top.
         commit((d) => {
           d.canvas = d.canvas.filter((c) => c.id !== item.id);
           d.canvas.push({ ...item, ...to });
         });
-      } else if (!moved && item.kind === "concrete") {
-        select(item.ref);
+      } else if (!moved) {
+        // A click selects a concrete. On an ingredient it just moves on from
+        // whatever was selected, leaving that bubble with the focus ring.
+        select(item.kind === "concrete" ? item.ref : null);
       }
     };
     card.addEventListener("pointerup", finish, { signal: done.signal });
@@ -1526,22 +1743,144 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Zooming and moving around the paper
+  //
+  // Zooming scales the layer the cards sit on, so a card's x and y stay in the
+  // paper's own units whatever the zoom. Distances on screen get divided by
+  // ui.zoom on the way in.
+
+  // Keeps the spot at `at` (the middle of the view without one) where it is on screen.
+  function setZoom(next, at) {
+    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    const zoom = Math.abs(clamped - 1) < 0.02 ? 1 : clamped; // settle on exactly 100%
+    const { paper } = els;
+    const box = paper.getBoundingClientRect();
+    const x = at ? at.x - box.left : paper.clientWidth / 2;
+    const y = at ? at.y - box.top : paper.clientHeight / 2;
+    const paperX = (paper.scrollLeft + x) / ui.zoom;
+    const paperY = (paper.scrollTop + y) / ui.zoom;
+    ui.zoom = zoom;
+    applyZoom();
+    paper.scrollLeft = paperX * zoom - x;
+    paper.scrollTop = paperY * zoom - y;
+  }
+
+  function applyZoom() {
+    const percent = `${Math.round(ui.zoom * 100)}%`;
+    els.cards.style.transform = `scale(${ui.zoom})`;
+    // The dots stay on the grid, but drop to every 2nd or 4th so that zooming
+    // out doesn't turn the paper grey.
+    const every = ui.zoom < 0.5 ? 4 : ui.zoom < 0.75 ? 2 : 1;
+    els.sheet.style.setProperty("--dot-step", `${GRID * ui.zoom * every}px`);
+    els.zoomLevel.textContent = percent;
+    els.zoomLevel.setAttribute("aria-label", `Zoomed to ${percent}. Back to 100%`);
+    els.zoomOut.setAttribute("aria-disabled", String(ui.zoom <= MIN_ZOOM));
+    els.zoomIn.setAttribute("aria-disabled", String(ui.zoom >= MAX_ZOOM));
+    fitSheet();
+  }
+
+  function stepZoom(direction) {
+    const next = direction > 0
+      ? ZOOM_STEPS.find((step) => step > ui.zoom + 0.001)
+      : ZOOM_STEPS.findLast((step) => step < ui.zoom - 0.001);
+    if (next) setZoom(next);
+  }
+
+  // A press on empty paper drags it around, or clears the selection if it was
+  // just a click. Two fingers anywhere on the paper pinch to zoom.
+  const pressed = new Map(); // pointers down on the paper, by id, with where they are now
+  let pan = null; // { x, y, left, top, moved } while the empty paper is held
+  let pinch = null; // { distance, zoom, x, y } while two fingers are down
+  let cancelCardDrag = null;
+
+  function onPaperPointerDown(event) {
+    // A press on the paper's own scrollbar lands on the paper rather than the sheet.
+    if (event.target === els.paper || event.button !== 0) return;
+    if (event.isPrimary) {
+      pressed.clear();
+      pan = null;
+      pinch = null;
+    }
+    pressed.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pressed.size === 2) {
+      cancelCardDrag?.();
+      pan = null;
+      const [a, b] = pressed.values();
+      pinch = {
+        distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        zoom: ui.zoom,
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2,
+      };
+    } else if (pressed.size === 1 && !event.target.closest(".card")) {
+      pan = {
+        x: event.clientX,
+        y: event.clientY,
+        left: els.paper.scrollLeft,
+        top: els.paper.scrollTop,
+        moved: false,
+      };
+      els.paper.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function onPaperPointerMove(event) {
+    const point = pressed.get(event.pointerId);
+    if (!point) return;
+    point.x = event.clientX;
+    point.y = event.clientY;
+    if (pinch) {
+      const [a, b] = pressed.values();
+      const x = (a.x + b.x) / 2;
+      const y = (a.y + b.y) / 2;
+      setZoom(pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.distance, { x, y });
+      els.paper.scrollLeft -= x - pinch.x;
+      els.paper.scrollTop -= y - pinch.y;
+      pinch.x = x;
+      pinch.y = y;
+    } else if (pan) {
+      const dx = event.clientX - pan.x;
+      const dy = event.clientY - pan.y;
+      if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+      pan.moved = true;
+      els.workspace.classList.add("is-panning");
+      els.paper.scrollLeft = pan.left - dx;
+      els.paper.scrollTop = pan.top - dy;
+    }
+  }
+
+  function onPaperPointerEnd(event) {
+    if (!pressed.delete(event.pointerId)) return;
+    if (pan && !pan.moved && event.type === "pointerup") {
+      select(null);
+      els.paper.focus({ preventScroll: true });
+    }
+    pan = null;
+    if (pressed.size < 2) pinch = null;
+    els.workspace.classList.remove("is-panning");
+  }
+
+  // ---------------------------------------------------------------------------
   // Events
 
   els.concreteList.addEventListener("click", (event) => {
     const row = event.target.closest(".row");
+    const tag = event.target.closest(".tag");
     if (!row) return;
-    if (event.target.closest(".row-place")) place("concrete", row.dataset.id);
+    if (tag) toggleFilterTag("concretes", tag.dataset.tag);
+    else if (event.target.closest(".row-place")) place("concrete", row.dataset.id);
     else if (event.target.closest(".row-more")) openPage("concretes", row.dataset.id);
     else if (event.target.closest(".row-edit")) openConcreteDraft(row.dataset.id);
-    else if (event.target.closest(".row-tools")) return;
+    else if (event.target.closest(".row-tools, .row-tags")) return;
     else select(ui.selectedId === row.dataset.id ? null : row.dataset.id);
   });
 
   els.ingredientList.addEventListener("click", (event) => {
     const row = event.target.closest(".row");
+    const tag = event.target.closest(".tag");
     if (!row) return;
-    if (event.target.closest(".row-place")) place("ingredient", row.dataset.id);
+    if (tag) toggleFilterTag("ingredients", tag.dataset.tag);
+    else if (event.target.closest(".row-place")) place("ingredient", row.dataset.id);
     else if (event.target.closest(".row-more")) openPage("ingredients", row.dataset.id);
     else if (event.target.closest(".row-edit")) openIngredientDraft(row.dataset.id);
     else if (!event.target.closest("button.row-main")) return;
@@ -1550,12 +1889,42 @@
   });
 
   for (const kind of KINDS) {
-    (kind === "concretes" ? els.concretePage : els.ingredientPage).addEventListener("click", (event) => {
+    const { page, filter } = panels[kind];
+    const search = $(".panel-search", filter);
+
+    page.addEventListener("click", (event) => {
       const link = event.target.closest(".page-link");
+      const tag = event.target.closest(".tag");
       if (event.target.closest(".page-back")) closePage(kind);
-      else if (event.target.closest(".row-edit")) {
+      else if (tag) {
+        // Back to the list, showing everything with this tag.
+        clearFilter(kind);
+        ui.filters[kind].tags.add(tag.dataset.tag);
+        closePage(kind);
+      } else if (event.target.closest(".row-edit")) {
         (kind === "concretes" ? openConcreteDraft : openIngredientDraft)(ui.page[kind]);
       } else if (link) openPage(link.dataset.kind, link.dataset.id);
+    });
+
+    search.addEventListener("input", () => {
+      ui.filters[kind].text = search.value;
+      refreshLists();
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !search.value) return;
+      event.preventDefault();
+      search.value = "";
+      ui.filters[kind].text = "";
+      refreshLists();
+    });
+    filter.addEventListener("click", (event) => {
+      const tag = event.target.closest(".tag");
+      if (tag) toggleFilterTag(kind, tag.dataset.tag);
+      else if (event.target.closest(".filter-clear")) {
+        clearFilter(kind);
+        refreshLists();
+        search.focus();
+      }
     });
   }
 
@@ -1590,12 +1959,46 @@
     // Land the bubble centred on the pointer.
     const [dx, dy] = kind === "concrete" ? [GRID * 3, GRID * 2.5] : [GRID * 2.5, GRID * 2];
     place(kind, ref, {
-      x: snap(event.clientX - origin.left - dx),
-      y: snap(event.clientY - origin.top - dy),
+      x: snap((event.clientX - origin.left) / ui.zoom - dx),
+      y: snap((event.clientY - origin.top) / ui.zoom - dy),
     });
   });
 
   document.addEventListener("dragend", () => els.workspace.classList.remove("is-drop-target"));
+
+  // First, so that a second finger on a card starts a pinch rather than a drag.
+  els.paper.addEventListener("pointerdown", onPaperPointerDown, { capture: true });
+  addEventListener("pointermove", onPaperPointerMove);
+  addEventListener("pointerup", onPaperPointerEnd);
+  addEventListener("pointercancel", onPaperPointerEnd);
+
+  // A trackpad pinch arrives as a wheel event with ctrlKey set, in all but Safari.
+  els.workspace.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1);
+    const step = Math.max(-25, Math.min(25, delta));
+    setZoom(ui.zoom * Math.exp(-step * 0.01), { x: event.clientX, y: event.clientY });
+  }, { passive: false });
+
+  // Safari's own events for that. On a touch screen the pointers above have it covered.
+  let gestureStartZoom = 1;
+  els.workspace.addEventListener("gesturestart", (event) => {
+    event.preventDefault();
+    gestureStartZoom = ui.zoom;
+  });
+  els.workspace.addEventListener("gesturechange", (event) => {
+    event.preventDefault();
+    if (!pressed.size) setZoom(gestureStartZoom * event.scale, { x: event.clientX, y: event.clientY });
+  });
+
+  els.zoomOut.addEventListener("click", () => {
+    if (isEnabled(els.zoomOut)) stepZoom(-1);
+  });
+  els.zoomIn.addEventListener("click", () => {
+    if (isEnabled(els.zoomIn)) stepZoom(1);
+  });
+  els.zoomLevel.addEventListener("click", () => setZoom(1));
 
   els.sheet.addEventListener("pointerdown", onCardPointerDown);
   els.sheet.addEventListener("keydown", onCardKeydown);
@@ -1708,6 +2111,10 @@
 
   els.undo.title = isMac ? "Undo (⌘Z)" : "Undo (Ctrl+Z)";
   els.redo.title = isMac ? "Redo (⇧⌘Z)" : "Redo (Ctrl+Y)";
+  const zoomHint = isMac ? "pinch, or hold ⌘ and scroll" : "pinch, or hold Ctrl and scroll";
+  els.zoomOut.title = `Zoom out (or ${zoomHint})`;
+  els.zoomIn.title = `Zoom in (or ${zoomHint})`;
   checkSeed();
+  applyZoom();
   render();
 })();

@@ -25,6 +25,23 @@ hand. To change it:
 Everyone sees the changes within a few minutes. Changes stay in the browser
 they were made in until they're published, so do your editing in one browser.
 
+## Finding things
+
+Each list has a search box that looks through names, descriptions, notes and
+tags, and for concretes, the names of their ingredients too.
+
+To tag something, type into **Tags** in its form, with commas between the tags.
+A button for each tag then appears above the list. Click one to see only what
+has that tag, or several to narrow it further. **Clear** shows everything again.
+
+## The paper
+
+- Drag things onto it from the lists, or use their **+** button.
+- Click a bubble to select it, and click empty paper to clear the selection.
+- Drag empty paper to move around.
+- Zoom with **−** and **+** in the bottom right corner, by pinching, or by holding
+  Ctrl (⌘ on a Mac) and scrolling. The percentage takes it back to 100%.
+
 ## Making the key
 
 The key lets the site update this one GitHub project, and nothing else. Whoever

@@ -14,6 +14,8 @@
 // under that heading.
 // `notes` is optional as well: the longer write-up on the item's own page,
 // which opens from See more.
+// `tags` is optional too: a list of words to search and filter by, like
+// ["Structural", "Low carbon"].
 
 const SEED = {
   concretes: [
