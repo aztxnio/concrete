@@ -10,9 +10,20 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- Two links so one font failing to load doesn't take the other with it. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&display=swap">
   <link rel="stylesheet" href="styles.css">
 
+  <script>
+    // Dark or light paper and hidden lists, as this browser last had them, set
+    // before anything is drawn so the page doesn't flash the other way first.
+    try {
+      const view = JSON.parse(localStorage.getItem("concrete-view"));
+      if (view?.theme === "dark" || view?.theme === "light") document.documentElement.dataset.theme = view.theme;
+      if (Array.isArray(view?.hide) && view.hide.length) document.documentElement.dataset.hide = view.hide.join(" ");
+    } catch {
+      // Storage is blocked, so it's the defaults.
+    }
+  </script>
   <script src="data.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -21,7 +32,14 @@
 
   <div class="app">
     <aside class="panel panel--concretes" aria-labelledby="concretes-title">
-      <h2 class="panel-title" id="concretes-title">Concretes</h2>
+      <div class="panel-head">
+        <h2 class="panel-title" id="concretes-title">Concretes</h2>
+        <button type="button" class="panel-toggle" id="concretes-toggle" aria-expanded="true" aria-label="Hide concretes" title="Hide concretes">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
+            <path d="M11 4.5 6.5 9l4.5 4.5"/>
+          </svg>
+        </button>
+      </div>
       <div class="panel-filter" id="concrete-filter">
         <label class="sr-only" for="concrete-search">Search concretes</label>
         <input class="draft-input panel-search" id="concrete-search" type="search" placeholder="Search concretes" autocomplete="off" spellcheck="false">
@@ -32,7 +50,7 @@
         <div id="publish-draft"></div>
         <div id="concrete-draft"></div>
         <div id="concrete-page" hidden></div>
-        <ul class="list" id="concrete-list"></ul>
+        <div class="lists" id="concrete-list"></div>
       </div>
     </aside>
 
@@ -75,7 +93,12 @@
         </button>
       </div>
 
-      <div class="zoom" id="zoom" role="group" aria-label="Zoom">
+      <div class="zoom" id="zoom" role="group" aria-label="View">
+        <button type="button" class="tool tool--icon" id="theme" aria-pressed="false" aria-label="Dark mode" title="Dark mode">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <circle cx="9" cy="9" r="5.5"/><path d="M9 3.5a5.5 5.5 0 0 1 0 11z" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
         <button type="button" class="tool tool--icon" id="zoom-out" aria-label="Zoom out">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
             <path d="M4 9h10"/>
@@ -91,7 +114,14 @@
     </main>
 
     <aside class="panel panel--ingredients" aria-labelledby="ingredients-title">
-      <h2 class="panel-title" id="ingredients-title">Ingredients</h2>
+      <div class="panel-head">
+        <h2 class="panel-title" id="ingredients-title">Ingredients</h2>
+        <button type="button" class="panel-toggle" id="ingredients-toggle" aria-expanded="true" aria-label="Hide ingredients" title="Hide ingredients">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" aria-hidden="true">
+            <path d="M7 4.5 11.5 9 7 13.5"/>
+          </svg>
+        </button>
+      </div>
       <div class="panel-filter" id="ingredient-filter">
         <label class="sr-only" for="ingredient-search">Search ingredients</label>
         <input class="draft-input panel-search" id="ingredient-search" type="search" placeholder="Search ingredients" autocomplete="off" spellcheck="false">
@@ -101,7 +131,7 @@
       <div class="panel-scroll">
         <div id="ingredient-draft"></div>
         <div id="ingredient-page" hidden></div>
-        <div id="ingredient-list"></div>
+        <div class="lists" id="ingredient-list"></div>
       </div>
     </aside>
   </div>

@@ -15,8 +15,11 @@
   --paper-dot: oklch(0.77 0.012 93);
   --paper-dot-hot: oklch(0.5 0.014 93);
   --paper-text: oklch(0.5 0.012 93);
+  --paper-scheme: light;
   --card: oklch(0.988 0.004 93);
   --card-ink: oklch(0.2 0.008 93);
+  --card-line: var(--card-ink);
+  --card-shadow: oklch(0.2 0.008 93 / 0.14);
 
   --marker: oklch(0.88 0.175 93);
   --marker-hover: oklch(0.92 0.15 93);
@@ -40,9 +43,39 @@
   --grid: 20px;
 
   --panel-w: clamp(232px, 21vw, 304px);
+  --rail: 44px; /* what's left of a hidden list */
   --gutter: var(--space-lg);
   --bubble: 28px;
   --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Dark paper, for a dark room. The panels are ink either way, so it's the paper
+   that changes: the computer's own setting decides until the page's switch does. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: oklch(0.24 0.006 93);
+    --paper-dot: oklch(0.41 0.01 93);
+    --paper-dot-hot: oklch(0.66 0.012 93);
+    --paper-text: oklch(0.7 0.01 93);
+    --paper-scheme: dark;
+    --card: oklch(0.28 0.006 93);
+    --card-ink: oklch(0.93 0.008 93);
+    --card-line: oklch(0.6 0.01 93);
+    --card-shadow: oklch(0.1 0.005 93 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: oklch(0.24 0.006 93);
+  --paper-dot: oklch(0.41 0.01 93);
+  --paper-dot-hot: oklch(0.66 0.012 93);
+  --paper-text: oklch(0.7 0.01 93);
+  --paper-scheme: dark;
+  --card: oklch(0.28 0.006 93);
+  --card-ink: oklch(0.93 0.008 93);
+  --card-line: oklch(0.6 0.01 93);
+  --card-shadow: oklch(0.1 0.005 93 / 0.5);
 }
 
 *,
@@ -105,11 +138,21 @@ svg {
 /* Layout ------------------------------------------------------------------ */
 
 .app {
+  --concretes-w: var(--panel-w);
+  --ingredients-w: var(--panel-w);
   display: grid;
-  grid-template-columns: var(--panel-w) minmax(0, 1fr) var(--panel-w);
+  grid-template-columns: var(--concretes-w) minmax(0, 1fr) var(--ingredients-w);
   grid-template-areas: "concretes workspace ingredients";
   height: 100vh;
   height: 100dvh;
+}
+
+:root[data-hide~="concretes"] .app {
+  --concretes-w: var(--rail);
+}
+
+:root[data-hide~="ingredients"] .app {
+  --ingredients-w: var(--rail);
 }
 
 /* Panels ------------------------------------------------------------------ */
@@ -119,6 +162,7 @@ svg {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden; /* a very short window squeezes the list, rather than spilling it over the paper */
   background: var(--ink);
   color-scheme: dark;
 }
@@ -133,15 +177,103 @@ svg {
   border-left: 1px solid var(--ink-edge);
 }
 
-.panel-title {
-  margin: 0;
-  padding: var(--space-xl) var(--gutter) var(--space-md);
+.panel-head {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: var(--space-xl) var(--space-xs) var(--space-md) var(--gutter);
   border-bottom: 1px solid var(--ink-line);
+}
+
+.panel-title {
+  min-width: 0;
+  margin: 0;
   font-family: var(--font-display);
   font-size: var(--text-display);
   font-weight: 800;
   line-height: 0.9;
   letter-spacing: 0.01em;
+}
+
+.panel-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: -4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--chalk-faint);
+  transition:
+    color 120ms var(--ease-out),
+    background-color 120ms var(--ease-out);
+}
+
+.panel-toggle:hover {
+  background: var(--ink-raised);
+  color: var(--chalk);
+}
+
+.panel-toggle:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+.panel-toggle[aria-expanded="false"] svg {
+  transform: scaleX(-1);
+}
+
+/* A hidden list leaves a rail with its name on it, and the whole rail shows
+   the list again. */
+
+:root[data-hide~="concretes"] .panel--concretes > :not(.panel-head),
+:root[data-hide~="ingredients"] .panel--ingredients > :not(.panel-head) {
+  display: none;
+}
+
+:root[data-hide~="concretes"] .panel--concretes .panel-head,
+:root[data-hide~="ingredients"] .panel--ingredients .panel-head {
+  flex: 1;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: 0;
+}
+
+:root[data-hide~="concretes"] .panel--concretes .panel-title,
+:root[data-hide~="ingredients"] .panel--ingredients .panel-title {
+  color: var(--chalk-dim);
+  font-size: 1.5rem;
+  writing-mode: vertical-rl;
+}
+
+:root[data-hide~="concretes"] .panel--concretes .panel-toggle,
+:root[data-hide~="ingredients"] .panel--ingredients .panel-toggle {
+  margin: 0;
+  color: var(--chalk-dim);
+}
+
+:root[data-hide~="concretes"] .panel--concretes .panel-toggle::after,
+:root[data-hide~="ingredients"] .panel--ingredients .panel-toggle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+:root[data-hide~="concretes"] .panel--concretes:hover,
+:root[data-hide~="ingredients"] .panel--ingredients:hover {
+  background: var(--ink-raised);
+}
+
+:root[data-hide~="concretes"] .panel--concretes:hover .panel-title,
+:root[data-hide~="ingredients"] .panel--ingredients:hover .panel-title {
+  color: var(--chalk);
 }
 
 /* Tags: filters above a list, and on an item's row, page and form */
@@ -154,13 +286,19 @@ svg {
 
 .tag {
   min-height: 28px;
-  padding: var(--space-2xs) var(--space-xs);
+  padding: var(--space-2xs) 10px;
   border: 1px solid color-mix(in oklch, currentColor 30%, transparent);
+  border-radius: 999px;
   background: none;
   font-size: var(--text-sm);
   line-height: 1.2;
   text-align: left;
   overflow-wrap: anywhere;
+}
+
+/* Shows only what's still a work in progress */
+.tag--unfinished {
+  font-style: italic;
 }
 
 .tag:hover {
@@ -255,9 +393,12 @@ svg {
   scrollbar-color: var(--ink-line) transparent;
 }
 
-.panel-scroll > .list,
-#ingredient-list {
+.lists {
   padding-top: var(--space-xs);
+}
+
+.lists[inert] {
+  opacity: 0.35;
 }
 
 /* Bubbles: every concrete and ingredient has one, holding its icon if it has
@@ -325,6 +466,13 @@ button.row-main:hover {
   display: flex;
   align-items: center;
   min-height: var(--bubble);
+}
+
+/* Still a work in progress */
+.row-name.is-unfinished,
+.card-label.is-unfinished,
+.page-title.is-unfinished {
+  font-style: italic;
 }
 
 .row-desc {
@@ -519,10 +667,6 @@ button.row-main:hover {
   }
 }
 
-.list[inert] {
-  opacity: 0.35;
-}
-
 /* Picking ingredients for a new concrete: each row gets a tick box where its
    + button usually sits. */
 
@@ -546,10 +690,21 @@ button.row-main:hover {
   opacity: 1;
 }
 
-/* Ingredient groups */
+/* Groups. Anything without one sits at the top with no heading. A heading
+   drags to move its group, and its name double-clicks to rename. */
 
 .group {
+  position: relative;
   margin-top: var(--space-sm);
+}
+
+.group--loose {
+  margin-top: 0;
+}
+
+.group-head {
+  position: relative;
+  padding: var(--space-sm) var(--gutter) var(--space-2xs);
 }
 
 .group-name {
@@ -557,7 +712,6 @@ button.row-main:hover {
   align-items: center;
   gap: var(--space-sm);
   margin: 0;
-  padding: var(--space-sm) var(--gutter) var(--space-2xs);
   color: var(--chalk-dim);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -568,6 +722,68 @@ button.row-main:hover {
   flex: 1;
   height: 1px;
   background: var(--ink-line);
+}
+
+.group-label {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: grab;
+}
+
+.group-label:hover {
+  color: var(--chalk);
+}
+
+.group-label:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+.group-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--marker);
+  border-radius: 0;
+  background: none;
+  color: var(--chalk);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: inherit;
+  outline: none;
+}
+
+.group-head.is-renaming .group-name::after {
+  display: none;
+}
+
+/* Where a row or group being dragged would land */
+
+.drop-before::before,
+.drop-after::after {
+  content: "";
+  position: absolute;
+  right: var(--space-xs);
+  left: var(--gutter);
+  z-index: 1;
+  height: 2px;
+  background: var(--marker);
+  pointer-events: none;
+}
+
+.drop-before::before {
+  top: -1px;
+}
+
+.drop-after::after {
+  bottom: -1px;
 }
 
 /* An item's own page, which takes over its panel from See more */
@@ -611,6 +827,13 @@ button.row-main:hover {
   font-weight: 700;
   line-height: 1.2;
   overflow-wrap: anywhere;
+}
+
+.page-wip {
+  margin: calc(var(--space-xs) * -1) 0 0;
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  font-style: italic;
 }
 
 .page-desc {
@@ -729,6 +952,77 @@ textarea.draft-input {
   box-shadow: 0 1px 0 var(--marker);
 }
 
+/* Tags in a form: every one in use, to click on or off, then a box for a new one */
+
+.tag-new {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: var(--space-2xs) 10px;
+  border: 1px dashed color-mix(in oklch, currentColor 45%, transparent);
+  border-radius: 999px;
+  background: none;
+  font-size: var(--text-sm);
+  line-height: 1.2;
+}
+
+.tag-new::placeholder {
+  color: var(--chalk-dim);
+  opacity: 1;
+}
+
+.tag-new:focus {
+  border-style: solid;
+  border-color: var(--marker);
+  outline: none;
+}
+
+.draft-note {
+  margin: 0;
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* Work in progress: a tick box like the ones for picking ingredients */
+
+.draft-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2xs) var(--space-xs);
+}
+
+.draft-check .draft-note {
+  grid-column: 2;
+}
+
+.draft-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--chalk-dim);
+  border-radius: 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.draft-checkbox:checked {
+  border-color: var(--chalk);
+  background: var(--chalk);
+  box-shadow: inset 0 0 0 2.5px var(--ink-raised);
+}
+
+.draft-checkbox:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+.draft-check-label {
+  cursor: pointer;
+}
+
 .icon-field {
   display: flex;
   flex-wrap: wrap;
@@ -820,7 +1114,7 @@ textarea.draft-input {
   container-type: inline-size;
   background: var(--paper);
   color: var(--card-ink);
-  color-scheme: light;
+  color-scheme: var(--paper-scheme);
 }
 
 /* Frame that appears while something is dragged over the paper */
@@ -838,28 +1132,44 @@ textarea.draft-input {
   box-shadow: inset 0 0 0 2px var(--card-ink);
 }
 
-/* app.js handles fingers on the paper itself: drag to move around, pinch to zoom. */
+/* app.js handles fingers on the paper itself: drag to move around, pinch to
+   zoom. The paper moves by dragging or scrolling, so it needs no scroll bars. */
 .paper {
   position: absolute;
   inset: 0;
   overflow: auto;
   outline: none;
+  scrollbar-width: none;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* Dots sit exactly on multiples of --grid, where card corners snap. app.js
-   changes --dot-step as the zoom changes. */
+.paper::-webkit-scrollbar {
+  display: none;
+}
+
+/* Dots sit exactly on multiples of --grid, where card corners snap, with a
+   stronger one every 5th. app.js sets the spacing, size and how far the ones
+   in between have faded as the zoom changes. */
 .sheet {
   --dot-step: var(--grid);
+  --dot-fade: 100%;
+  --dot-r: 1.1px;
+  --dot: var(--paper-dot);
   position: relative;
   min-width: 100%;
   min-height: 100%;
   background-color: var(--paper);
-  background-image: radial-gradient(circle, var(--paper-dot) 1.1px, transparent 1.6px);
-  background-position: calc(var(--dot-step) / -2) calc(var(--dot-step) / -2);
-  background-size: var(--dot-step) var(--dot-step);
+  background-image:
+    radial-gradient(circle, var(--dot) calc(var(--dot-r) + 0.3px), transparent calc(var(--dot-r) + 0.8px)),
+    radial-gradient(circle, color-mix(in oklch, var(--dot) var(--dot-fade), transparent) var(--dot-r), transparent calc(var(--dot-r) + 0.5px));
+  background-position:
+    calc(var(--dot-step) * -2.5) calc(var(--dot-step) * -2.5),
+    calc(var(--dot-step) / -2) calc(var(--dot-step) / -2);
+  background-size:
+    calc(var(--dot-step) * 5) calc(var(--dot-step) * 5),
+    var(--dot-step) var(--dot-step);
   cursor: grab;
 }
 
@@ -877,17 +1187,21 @@ textarea.draft-input {
 }
 
 .workspace.is-drop-target .sheet {
-  background-image: radial-gradient(circle, var(--paper-dot-hot) 1.25px, transparent 1.75px);
+  --dot: var(--paper-dot-hot);
 }
 
+/* In the middle, where the paper opens */
 .empty-hint {
   position: absolute;
-  top: calc(var(--grid) * 2);
-  left: calc(var(--grid) * 2);
-  max-width: min(36ch, calc(100% - var(--grid) * 4));
+  top: 50%;
+  left: 50%;
+  width: max-content;
+  max-width: min(32ch, calc(100% - var(--grid) * 4));
   margin: 0;
   color: var(--paper-text);
+  text-align: center;
   pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
 .empty-hint[hidden],
@@ -958,7 +1272,7 @@ textarea.draft-input {
 
 .card .bubble {
   --bubble: calc(var(--grid) * 4);
-  outline: 1px solid var(--card-ink);
+  outline: 1px solid var(--card-line);
   outline-offset: -1px;
   background: color-mix(in oklch, var(--card-ink) 8%, var(--card));
   transition: box-shadow 160ms var(--ease-out);
@@ -1046,7 +1360,9 @@ textarea.draft-input {
   outline: none;
 }
 
-.card:focus .bubble {
+/* Focused, or an ingredient that's open in its list */
+.card:focus .bubble,
+.card.is-open .bubble {
   box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--card-ink);
 }
 
@@ -1060,7 +1376,7 @@ textarea.draft-input {
 }
 
 .card.is-dragging .bubble {
-  box-shadow: 5px 5px 0 oklch(0.2 0.008 93 / 0.14);
+  box-shadow: 5px 5px 0 var(--card-shadow);
 }
 
 /* Toolbar: part of the frame, notched into the paper's bottom-left corner */
@@ -1109,6 +1425,11 @@ textarea.draft-input {
 
 .tool.is-on {
   background: var(--ink-raised);
+  box-shadow: inset 0 -2px 0 var(--marker);
+}
+
+/* Dark mode, while it's on */
+.tool[aria-pressed="true"] {
   box-shadow: inset 0 -2px 0 var(--marker);
 }
 
@@ -1234,11 +1555,41 @@ textarea.draft-input {
 
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    --concretes-w: minmax(0, 1fr);
+    --ingredients-w: minmax(0, 1fr);
+    grid-template-columns: var(--concretes-w) var(--ingredients-w);
     grid-template-rows: minmax(0, 46fr) minmax(0, 54fr);
     grid-template-areas:
       "concretes ingredients"
       "workspace workspace";
+  }
+
+  /* With both lists hidden they're bars across the top, and the paper gets
+     the rest. */
+  :root[data-hide~="concretes"][data-hide~="ingredients"] .app {
+    --concretes-w: minmax(0, 1fr);
+    --ingredients-w: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  :root[data-hide~="concretes"][data-hide~="ingredients"] .panel-head {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--gutter);
+  }
+
+  :root[data-hide~="concretes"][data-hide~="ingredients"] .panel-title {
+    writing-mode: horizontal-tb;
+  }
+
+  /* Pointing down, to where the list opens */
+  :root[data-hide~="concretes"][data-hide~="ingredients"] .panel--concretes .panel-toggle svg {
+    transform: rotate(-90deg);
+  }
+
+  :root[data-hide~="concretes"][data-hide~="ingredients"] .panel--ingredients .panel-toggle svg {
+    transform: rotate(90deg);
   }
 
   .panel--concretes {
@@ -1263,7 +1614,7 @@ textarea.draft-input {
     --bubble: 24px;
   }
 
-  .panel-title {
+  .panel-head {
     padding-top: var(--space-md);
     padding-bottom: var(--space-sm);
   }
@@ -1299,11 +1650,6 @@ textarea.draft-input {
 
   .row-check {
     right: var(--space-sm);
-  }
-
-  .empty-hint {
-    top: var(--grid);
-    left: var(--grid);
   }
 }
 

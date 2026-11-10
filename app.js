@@ -9,8 +9,15 @@
   const HISTORY_LIMIT = 200;
   const STORAGE_KEY = "concrete-workspace";
   const PUBLISH_STORAGE_KEY = "concrete-publish"; // the GitHub project and key, kept apart from the data
+  const VIEW_STORAGE_KEY = "concrete-view"; // hidden lists and dark or light paper, for this browser alone
   const ICON_SIZE = 160; // icons are stored as squares this many pixels wide, sharp in the big bubbles
   const KINDS = ["concretes", "ingredients"];
+  // The paper's size at 100%, in its own units. It opens on the middle, so
+  // there's room to spread out in every direction.
+  const WORLD = { width: GRID * 300, height: GRID * 200 };
+  // Where cards saved back when the paper started at its top-left corner move
+  // to, so that what was in the middle of the view then is in the middle now.
+  const OLD_CANVAS_SHIFT = { x: WORLD.width / 2 - GRID * 30, y: WORLD.height / 2 - GRID * 20 };
   const MIN_ZOOM = 0.25;
   const MAX_ZOOM = 3;
   const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3]; // where the + and - buttons stop
@@ -47,6 +54,7 @@
     publishLabel: $("#publish-label"),
     publishCount: $("#publish-count"),
     publishDraft: $("#publish-draft"),
+    theme: $("#theme"),
     zoom: $("#zoom"),
     zoomOut: $("#zoom-out"),
     zoomLevel: $("#zoom-level"),
@@ -54,8 +62,18 @@
   };
 
   const panels = {
-    concretes: { page: els.concretePage, list: els.concreteList, filter: $("#concrete-filter") },
-    ingredients: { page: els.ingredientPage, list: els.ingredientList, filter: $("#ingredient-filter") },
+    concretes: {
+      page: els.concretePage,
+      list: els.concreteList,
+      filter: $("#concrete-filter"),
+      toggle: $("#concretes-toggle"),
+    },
+    ingredients: {
+      page: els.ingredientPage,
+      list: els.ingredientList,
+      filter: $("#ingredient-filter"),
+      toggle: $("#ingredients-toggle"),
+    },
   };
 
   const seed = { concretes: SEED.concretes ?? [], ingredients: SEED.ingredients ?? [] };
@@ -78,10 +96,11 @@
 
   const ui = {
     selectedId: null,
-    openIngredients: new Set(),
+    openIngredient: null, // one at a time, showing its description, tags, See more and Edit
     // The forms. `editing` is the id of the item being edited, or null for a new one.
-    concreteDraft: null, // { editing, name, description, notes, tags, icon, picked: Set of ingredient ids, error }
-    ingredientDraft: null, // { editing, name, description, notes, tags, icon, group, error }
+    // { editing, name, description, notes, tags: [], icon, group, unfinished, picked: Set of ingredient ids, error }
+    concreteDraft: null,
+    ingredientDraft: null, // { editing, name, description, notes, tags: [], icon, group, unfinished, error }
     publishDraft: null, // { project, key, error }
     publishing: false,
     // The item each panel is showing as a page, from See more, and where its
@@ -90,9 +109,10 @@
     pageScroll: { concretes: 0, ingredients: 0 },
     // What each list is narrowed down to. `tags` holds them in lowercase.
     filters: {
-      concretes: { text: "", tags: new Set() },
-      ingredients: { text: "", tags: new Set() },
+      concretes: { text: "", tags: new Set(), unfinished: false },
+      ingredients: { text: "", tags: new Set(), unfinished: false },
     },
+    renaming: null, // { kind, key, text } while a group's name is being changed
     zoom: 1,
   };
 
@@ -126,12 +146,21 @@
   };
   const keyOf = (kind, id) => `${kind === "concretes" ? "c" : "i"}:${id}`;
 
-  // How a doc differs from data.js: items that are new or edited, and the ids
-  // of ones deleted. Anything published but not yet in this page's copy of
-  // data.js counts as being there, so deleting it takes it off GitHub too.
+  const orderKey = (kind) => `order:${kind}`;
+
+  // How a doc differs from data.js: items that are new or edited, the ids of
+  // ones deleted, and for a list that's been rearranged, its ids in their new
+  // order. Anything published but not yet in this page's copy of data.js
+  // counts as being there, so deleting it takes it off GitHub too.
   function changes(d) {
-    const result = { concretes: [], ingredients: [], removed: { concretes: [], ingredients: [] } };
+    const result = {
+      concretes: [],
+      ingredients: [],
+      removed: { concretes: [], ingredients: [] },
+      order: { concretes: null, ingredients: null },
+    };
     for (const kind of KINDS) {
+      result.order[kind] = changedOrder(kind, d[kind]);
       const originals = seedById[kind];
       result[kind] = d[kind].filter((item) => {
         const original = originals.get(item.id);
@@ -147,13 +176,27 @@
     return result;
   }
 
+  // A list's ids if it's in a different order from data.js, or null if it's
+  // the same, with anything new at the end.
+  function changedOrder(kind, list) {
+    const present = new Set(list.map((item) => item.id));
+    const expected = [
+      ...seed[kind].map((item) => item.id).filter((id) => present.has(id)),
+      ...list.filter((item) => !seedById[kind].has(item.id)).map((item) => item.id),
+    ];
+    return expected.every((id, i) => id === list[i]?.id) ? null : list.map((item) => item.id);
+  }
+
   // How many of those haven't been published. The Publish button shows this.
+  // Rearranging a list counts as one, however much moved.
   function unpublishedCount(d) {
     const changed = changes(d);
     let count = 0;
     for (const kind of KINDS) {
       count += changed[kind].filter((item) => published.get(keyOf(kind, item.id)) !== fingerprint(item)).length;
       count += changed.removed[kind].filter((id) => published.get(keyOf(kind, id)) !== "removed").length;
+      const order = changed.order[kind];
+      if (order && published.get(orderKey(kind)) !== hashOf(order.join("\n"))) count += 1;
     }
     return count;
   }
@@ -165,13 +208,16 @@
   function fingerprint(item) {
     let print = fingerprints.get(item);
     if (print === undefined) {
-      const text = JSON.stringify(item);
-      let hash = 2166136261;
-      for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
-      print = `${(hash >>> 0).toString(36)}.${text.length.toString(36)}`;
+      print = hashOf(JSON.stringify(item));
       fingerprints.set(item, print);
     }
     return print;
+  }
+
+  function hashOf(text) {
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    return `${(hash >>> 0).toString(36)}.${text.length.toString(36)}`;
   }
 
   function readSaved() {
@@ -192,7 +238,8 @@
     if (!saved) return { ...lists, canvas: [] };
 
     // Saved items take the place of data.js ones with the same id, or join
-    // the end, and deleted ones come out.
+    // the end, and deleted ones come out. A list that's been rearranged here
+    // keeps its own order, with anything data.js has gained since at the end.
     for (const kind of KINDS) {
       for (const item of saved[kind] ?? []) {
         if (!item?.id) continue;
@@ -202,9 +249,24 @@
       }
       const gone = new Set(Array.isArray(saved.removed?.[kind]) ? saved.removed[kind] : []);
       lists[kind] = lists[kind].filter((item) => !gone.has(item.id));
+      const order = saved.order?.[kind];
+      if (Array.isArray(order)) lists[kind] = inOrder(lists[kind], order);
     }
     const exists = (card) => lists[card.kind === "concrete" ? "concretes" : "ingredients"].some((x) => x.id === card.ref);
-    return { ...lists, canvas: (saved.canvas ?? []).filter(exists) };
+    let canvas = (saved.canvas ?? []).filter(exists);
+    // The paper used to start at its top-left corner. Cards saved then move to
+    // the middle, keeping how they sit together.
+    if (!saved.centred) canvas = canvas.map((card) => ({ ...card, x: card.x + OLD_CANVAS_SHIFT.x, y: card.y + OLD_CANVAS_SHIFT.y }));
+    return { ...lists, canvas };
+  }
+
+  // A list sorted into the order of these ids, with any others at the end as they were.
+  function inOrder(list, ids) {
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    return list
+      .map((item, i) => ({ item, at: rank.get(item.id) ?? ids.length + i }))
+      .sort((a, b) => a.at - b.at)
+      .map(({ item }) => item);
   }
 
   function publishedIn(saved) {
@@ -220,13 +282,16 @@
     for (const kind of KINDS) {
       for (const item of changed[kind]) pending.add(keyOf(kind, item.id));
       for (const id of changed.removed[kind]) pending.add(keyOf(kind, id));
+      if (changed.order[kind]) pending.add(orderKey(kind));
     }
     const data = {
       version: 1,
       concretes: changed.concretes,
       ingredients: changed.ingredients,
       removed: changed.removed,
+      order: changed.order,
       canvas: doc.canvas,
+      centred: true,
       published: Object.fromEntries([...published].filter(([key]) => pending.has(key))),
     };
     try {
@@ -247,6 +312,10 @@
   // Another tab saved. Take its version so the two tabs don't overwrite each other.
   addEventListener("storage", (event) => {
     if (event.key === null || event.key === PUBLISH_STORAGE_KEY) settings = readSettings();
+    if (event.key === null || event.key === VIEW_STORAGE_KEY) {
+      Object.assign(view, readView());
+      applyView();
+    }
     if (event.key !== null && event.key !== STORAGE_KEY) return;
     const saved = readSaved();
     doc = load(saved);
@@ -308,12 +377,15 @@
     "//",
     "// `icon` is optional: a path to an image (for example \"icons/sand.png\") or an",
     "// image data URL. Without one, the item shows a plain circle.",
-    "// `group` is optional too. Ingredients that share a group are listed together",
-    "// under that heading.",
+    "// `group` is optional too. Concretes or ingredients that share a group are",
+    "// listed together under that heading. Both lists show everything in the",
+    "// order it's in here.",
     "// `notes` is optional as well: the longer write-up on the item's own page,",
     "// which opens from See more.",
     "// `tags` is optional too: a list of words to search and filter by, like",
     "// [\"Structural\", \"Low carbon\"].",
+    "// `unfinished: true` marks one as still a work in progress, which shows its",
+    "// name in italics. Leave it out once it's done.",
   ];
 
   // { project: "owner/name", key } for this browser, or null before the first publish.
@@ -351,6 +423,7 @@
       for (const kind of KINDS) {
         for (const item of sending[kind]) published.set(keyOf(kind, item.id), fingerprint(item));
         for (const id of sending.removed[kind]) published.set(keyOf(kind, id), "removed");
+        if (sending.order[kind]) published.set(orderKey(kind), hashOf(sending.order[kind].join("\n")));
       }
       // Undo can't take back what's on GitHub, so it starts afresh from here.
       history.past.length = 0;
@@ -395,6 +468,7 @@
   // The form is built afresh each time it opens, so it shows what's saved now.
   function openPublishDraft(error = "", focus = "key") {
     ui.publishDraft = { project: settings?.project || guessProject(), key: settings?.key ?? "", error };
+    showPanel("concretes"); // the form sits at the top of the concretes list
     els.publishDraft.replaceChildren();
     render();
     const input = $(ui.publishDraft.project ? `#publish-${focus}` : "#publish-project");
@@ -489,24 +563,29 @@
 
   // GitHub's lists with edited items swapped in where they were, new ones at
   // the end, and deleted ones gone, including from any concrete that used them.
+  // A list rearranged here takes this order, with anything that's only on
+  // GitHub left at the end.
   function applyChanges(base, sending) {
-    const apply = (list, changed, removed) => {
-      const edits = new Map(changed.map((item) => [item.id, item]));
-      const kept = list.filter((item) => !removed.includes(item.id)).map((item) => edits.get(item.id) ?? item);
-      return [...kept, ...changed.filter((item) => !kept.some((x) => x.id === item.id))];
+    const apply = (kind) => {
+      const removed = sending.removed[kind];
+      const edits = new Map(sending[kind].map((item) => [item.id, item]));
+      const kept = base[kind].filter((item) => !removed.includes(item.id)).map((item) => edits.get(item.id) ?? item);
+      const list = [...kept, ...sending[kind].filter((item) => !kept.some((x) => x.id === item.id))];
+      return sending.order[kind] ? inOrder(list, sending.order[kind]) : list;
     };
     const gone = new Set(sending.removed.ingredients);
-    const concretes = apply(base.concretes, sending.concretes, sending.removed.concretes).map((c) =>
+    const concretes = apply("concretes").map((c) =>
       c.ingredients?.some((id) => gone.has(id)) ? { ...c, ingredients: c.ingredients.filter((id) => !gone.has(id)) } : c);
-    return { concretes, ingredients: apply(base.ingredients, sending.ingredients, sending.removed.ingredients) };
+    return { concretes, ingredients: apply("ingredients") };
   }
 
-  // A commit message such as "Add Sand; Edit C30 mix; Delete Lime", or "" if
-  // nothing differs.
+  // A commit message such as "Add Sand; Edit C30 mix; Delete Lime; Reorder
+  // ingredients", or "" if nothing differs.
   function describeChanges(before, after) {
     const added = [];
     const edited = [];
     const deleted = [];
+    const reordered = [];
     for (const kind of KINDS) {
       const old = new Map(before[kind].map((item) => [item.id, item]));
       const now = new Set(after[kind].map((item) => item.id));
@@ -517,12 +596,18 @@
       for (const item of before[kind]) {
         if (!now.has(item.id)) deleted.push(item.name);
       }
+      // Whether what's in both comes in a different order.
+      const was = before[kind].map((item) => item.id).filter((id) => now.has(id));
+      const is = after[kind].map((item) => item.id).filter((id) => old.has(id));
+      if (was.some((id, i) => id !== is[i])) reordered.push(`Reorder ${kind}`);
     }
-    const message = [["Add", added], ["Edit", edited], ["Delete", deleted]]
-      .filter(([, names]) => names.length)
-      .map(([verb, names]) => `${verb} ${names.join(", ")}`)
-      .join("; ");
-    const count = added.length + edited.length + deleted.length;
+    const message = [
+      ...[["Add", added], ["Edit", edited], ["Delete", deleted]]
+        .filter(([, names]) => names.length)
+        .map(([verb, names]) => `${verb} ${names.join(", ")}`),
+      ...reordered,
+    ].join("; ");
+    const count = added.length + edited.length + deleted.length + reordered.length;
     return message.length <= 72 ? message : `Update ${count} things from the site`;
   }
 
@@ -687,10 +772,10 @@
 
   function render() {
     if (ui.selectedId && !findConcrete(ui.selectedId)) ui.selectedId = null;
+    if (ui.openIngredient && !findIngredient(ui.openIngredient)) ui.openIngredient = null;
     keepingFocus(() => {
       renderFilters();
-      renderConcretes();
-      renderIngredients();
+      renderLists();
       renderDrafts();
       renderPages();
       renderCanvas();
@@ -706,50 +791,100 @@
     if (focusKey) $(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
-  function renderConcretes() {
-    els.concreteList.replaceChildren(
-      ...doc.concretes.filter((c) => matchesFilter("concretes", c)).map((c) =>
-        h("li", { class: "row", draggable: "true", "data-kind": "concrete", "data-id": c.id },
-          h("button", { type: "button", class: "row-main", "aria-pressed": "false", "data-focus-key": `concrete:${c.id}` },
-            bubble(c),
-            h("span", { class: "row-name" }, c.name),
-            c.description ? h("span", { class: "row-desc" }, c.description) : null,
-            h("span", { class: "row-count" },
-              String(ingredientsOf(c).length),
-              h("span", { class: "sr-only" }, " ingredients"))),
-          placeButton("concrete", c),
-          rowTags("concretes", c),
-          rowTools("concrete", c))));
+  function renderLists() {
+    for (const kind of KINDS) renderList(kind);
   }
 
-  function renderIngredients() {
-    const picking = Boolean(ui.concreteDraft);
-    els.ingredientList.classList.toggle("is-picking", picking);
+  // Both lists are in groups: first anything without one, then each group in
+  // the order it first appears. Dragging rows and group headings rearranges
+  // them, and double-clicking a group's name renames it.
+  function renderList(kind) {
+    const { list } = panels[kind];
+    const picking = kind === "ingredients" && Boolean(ui.concreteDraft);
+    list.classList.toggle("is-picking", picking);
     // Filtered within the groups, so that they stay in the same order.
-    const groups = ingredientGroups()
-      .map((group) => ({ ...group, items: group.items.filter((i) => matchesFilter("ingredients", i)) }))
+    const groups = groupsIn(doc[kind])
+      .map((group) => ({ ...group, items: group.items.filter((item) => matchesFilter(kind, item)) }))
       .filter((group) => group.items.length);
-    els.ingredientList.replaceChildren(
+    list.replaceChildren(
       ...groups.map((group, index) => {
-        const list = h("ul", { class: "list" }, group.items.map((i) => ingredientRow(i, picking)));
-        if (!group.name) return list;
-        return h("section", { class: "group", "aria-labelledby": `group-${index}` },
-          h("h3", { class: "group-name", id: `group-${index}` }, group.name),
-          list);
+        const rows = h("ul", { class: "list" },
+          group.items.map((item) => (kind === "concretes" ? concreteRow(item) : ingredientRow(item, picking))));
+        if (!group.name) return h("div", { class: "group group--loose" }, rows);
+        const titleId = `${kind}-group-${index}`;
+        return h("section", { class: "group", "data-group": group.key, "aria-labelledby": titleId },
+          groupHead(kind, group, titleId),
+          rows);
       }));
   }
 
-  // Ingredients without a group come first, then each group in the order it
-  // first appears. Group names match regardless of capitals.
-  function ingredientGroups() {
-    const groups = new Map([["", { name: "", items: [] }]]);
-    for (const ingredient of doc.ingredients) {
-      const name = ingredient.group?.trim() ?? "";
-      const key = name.toLowerCase();
-      if (!groups.has(key)) groups.set(key, { name, items: [] });
-      groups.get(key).items.push(ingredient);
+  // Group names match regardless of capitals, spaces at either end, or how
+  // many spaces are between words.
+  function groupKeyOf(item) {
+    return String(item.group ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  // A list's items by group, in the order the list shows them.
+  function groupsIn(items) {
+    const groups = new Map([["", { key: "", name: "", items: [] }]]);
+    for (const item of items) {
+      const key = groupKeyOf(item);
+      if (!groups.has(key)) groups.set(key, { key, name: String(item.group).trim().replace(/\s+/g, " "), items: [] });
+      groups.get(key).items.push(item);
     }
-    return [...groups.values()].filter((g) => g.items.length);
+    return [...groups.values()].filter((group) => group.items.length);
+  }
+
+  // A group's heading: drag it to move the whole group, or double-click its
+  // name to rename it (Enter does that from the keyboard).
+  function groupHead(kind, group, titleId) {
+    if (ui.renaming?.kind === kind && ui.renaming.key === group.key) {
+      return h("div", { class: "group-head is-renaming" },
+        h("h3", { class: "group-name", id: titleId },
+          h("input", {
+            class: "group-input",
+            type: "text",
+            value: ui.renaming.text,
+            maxlength: "80",
+            autocomplete: "off",
+            spellcheck: "false",
+            "aria-label": `New name for ${group.name}`,
+            "data-focus-key": `rename:${kind}`,
+          })));
+    }
+    return h("div", { class: "group-head", draggable: "true" },
+      h("h3", { class: "group-name", id: titleId },
+        h("button", {
+            type: "button",
+            class: "group-label",
+            title: "Double-click to rename. Drag to move the whole group.",
+            "data-focus-key": `group:${kind}:${group.key}`,
+          },
+          group.name)));
+  }
+
+  function concreteRow(c) {
+    return h("li", { class: "row", draggable: "true", "data-kind": "concrete", "data-id": c.id },
+      h("button", { type: "button", class: "row-main", "aria-pressed": "false", "data-focus-key": `concrete:${c.id}` },
+        bubble(c),
+        rowName(c),
+        c.description ? h("span", { class: "row-desc" }, c.description) : null,
+        h("span", { class: "row-count" },
+          String(ingredientsOf(c).length),
+          h("span", { class: "sr-only" }, " ingredients"))),
+      placeButton("concrete", c),
+      rowTags("concretes", c),
+      rowTools("concrete", c));
+  }
+
+  // A work in progress shows its name in italics.
+  function rowName(item) {
+    return h("span", {
+        class: item.unfinished ? "row-name is-unfinished" : "row-name",
+        title: item.unfinished ? "Work in progress" : null,
+      },
+      item.name,
+      item.unfinished ? h("span", { class: "sr-only" }, " (work in progress)") : null);
   }
 
   // While a concrete is being made or edited, ingredient rows are tick boxes.
@@ -758,7 +893,7 @@
   function ingredientRow(ingredient, picking) {
     const content = [
       bubble(ingredient),
-      h("span", { class: "row-name" }, ingredient.name),
+      rowName(ingredient),
       ingredient.description ? h("span", { class: "row-desc" }, ingredient.description) : null,
     ];
     const focusKey = `ingredient:${ingredient.id}`;
@@ -839,20 +974,35 @@
     fitSheet();
   }
 
-  // Grow the sheet past the furthest card so there's always paper to drag onto.
-  // Zoomed in, it's at least the view's size at 100%, so any spot can stay put
-  // under the pointer while zooming.
+  // The sheet is the whole paper, grown past any card dragged beyond its edge
+  // so there's always paper to drag onto.
   function fitSheet() {
-    let right = 0;
-    let bottom = 0;
+    let right = WORLD.width;
+    let bottom = WORLD.height;
     for (const node of els.cards.children) {
-      right = Math.max(right, node.offsetLeft + node.offsetWidth);
-      bottom = Math.max(bottom, node.offsetTop + node.offsetHeight);
+      right = Math.max(right, node.offsetLeft + node.offsetWidth + GRID * 8);
+      bottom = Math.max(bottom, node.offsetTop + node.offsetHeight + GRID * 8);
     }
-    const { clientWidth, clientHeight } = els.paper;
-    const room = Math.max(ui.zoom, 1);
-    els.sheet.style.width = `${Math.max((right + GRID * 8) * ui.zoom, clientWidth * room)}px`;
-    els.sheet.style.height = `${Math.max((bottom + GRID * 8) * ui.zoom, clientHeight * room)}px`;
+    els.sheet.style.width = `${right * ui.zoom}px`;
+    els.sheet.style.height = `${bottom * ui.zoom}px`;
+  }
+
+  // The page opens on the middle of what's on the paper, or the middle of the
+  // paper when there's nothing on it.
+  function centreView() {
+    const nodes = [...els.cards.children];
+    let x = WORLD.width / 2;
+    let y = WORLD.height / 2;
+    if (nodes.length) {
+      const left = Math.min(...nodes.map((node) => node.offsetLeft));
+      const top = Math.min(...nodes.map((node) => node.offsetTop));
+      const right = Math.max(...nodes.map((node) => node.offsetLeft + node.offsetWidth));
+      const bottom = Math.max(...nodes.map((node) => node.offsetTop + node.offsetHeight));
+      x = (left + right) / 2;
+      y = (top + bottom) / 2;
+    }
+    els.paper.scrollLeft = x * ui.zoom - els.paper.clientWidth / 2;
+    els.paper.scrollTop = y * ui.zoom - els.paper.clientHeight / 2;
   }
 
   // Everything on the paper is its bubble, with its name underneath to say what it is.
@@ -864,7 +1014,7 @@
       class: `card card--${item.kind}`,
       tabindex: "0",
       role: "group",
-      "aria-label": thing.name,
+      "aria-label": thing.unfinished ? `${thing.name} (work in progress)` : thing.name,
       "aria-describedby": "card-help",
       "data-id": item.id,
       "data-kind": item.kind,
@@ -881,7 +1031,7 @@
       icon("cross"));
     return h("div", attrs,
       bubble(thing),
-      h("span", { class: "card-label" }, thing.name),
+      h("span", { class: thing.unfinished ? "card-label is-unfinished" : "card-label" }, thing.name),
       remove);
   }
 
@@ -918,7 +1068,7 @@
     for (const row of $$(".row", els.ingredientList)) {
       const id = row.dataset.id;
       const on = picking ? picking.picked.has(id) : inMix.has(id);
-      const open = !picking && ui.openIngredients.has(id);
+      const open = !picking && ui.openIngredient === id;
       const main = $(".row-main", row);
       row.classList.toggle("is-lit", on);
       row.classList.toggle("is-dim", Boolean(selected) && !picking && !on);
@@ -928,10 +1078,10 @@
     }
 
     for (const card of els.cards.children) {
-      const lit = card.dataset.kind === "concrete"
-        ? card.dataset.ref === ui.selectedId
-        : inMix.has(card.dataset.ref);
+      const concrete = card.dataset.kind === "concrete";
+      const lit = concrete ? card.dataset.ref === ui.selectedId : inMix.has(card.dataset.ref);
       card.classList.toggle("is-lit", lit);
+      card.classList.toggle("is-open", !concrete && !picking && card.dataset.ref === ui.openIngredient);
     }
 
     const draft = ui.concreteDraft;
@@ -975,10 +1125,33 @@
     revealRows($$(".row.is-lit", els.ingredientList));
   }
 
-  function toggleOpen(id) {
-    if (ui.openIngredients.has(id)) ui.openIngredients.delete(id);
-    else ui.openIngredients.add(id);
+  // Opening an ingredient closes whichever was open before.
+  function openIngredient(id) {
+    if (ui.concreteDraft) return;
+    ui.openIngredient = id;
     paint();
+    if (id) revealRows([rowNode("ingredients", id)]);
+  }
+
+  function toggleOpen(id) {
+    const row = rowNode("ingredients", id);
+    const before = row.getBoundingClientRect().top;
+    ui.openIngredient = ui.openIngredient === id ? null : id;
+    paint();
+    // Closing one higher up the list shouldn't pull this one out from under the pointer.
+    const shift = row.getBoundingClientRect().top - before;
+    if (shift) row.closest(".panel-scroll").scrollTop += shift;
+  }
+
+  // Clicking empty paper lets go of whatever was selected or open.
+  function clearSelection() {
+    if (ui.concreteDraft) return;
+    ui.openIngredient = null;
+    select(null);
+  }
+
+  function rowNode(kind, id) {
+    return $(`.row[data-id="${CSS.escape(id)}"]`, panels[kind].list);
   }
 
   // Scroll a panel so these rows are in view. If the first row (with its group
@@ -991,7 +1164,7 @@
     const box = rows[0].closest(".panel-scroll");
     const view = box.getBoundingClientRect();
     const pad = GRID / 2;
-    const anchor = rows[0].closest(".group")?.querySelector(".group-name") ?? rows[0];
+    const anchor = rows[0].closest(".group")?.querySelector(".group-head") ?? rows[0];
     const top = anchor.getBoundingClientRect().top - view.top - pad;
     const firstCutOff = rows[0].getBoundingClientRect().bottom > view.bottom;
     const bottom = rows.at(-1).getBoundingClientRect().bottom - view.bottom + pad;
@@ -1008,7 +1181,8 @@
   // several tags narrows the list to the items that have all of them.
 
   function matchesFilter(kind, item) {
-    const { text, tags } = ui.filters[kind];
+    const { text, tags, unfinished } = ui.filters[kind];
+    if (unfinished && !item.unfinished) return false;
     const own = new Set(tagsOf(item).map((tag) => tag.toLowerCase()));
     if ([...tags].some((tag) => !own.has(tag))) return false;
     const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -1053,10 +1227,23 @@
       for (const tag of filter.tags) {
         if (!known.has(tag)) filter.tags.delete(tag);
       }
+      // So does Work in progress, once nothing in the list is.
+      const unfinished = doc[kind].some((item) => item.unfinished);
+      if (!unfinished) filter.unfinished = false;
       const bar = panels[kind].filter;
       $(".filter-tags", bar).replaceChildren(
+        ...(unfinished
+          ? [h("button", {
+                type: "button",
+                class: "tag tag--unfinished",
+                "aria-pressed": String(filter.unfinished),
+                "data-filter": "unfinished",
+                "data-focus-key": `filter-unfinished:${kind}`,
+              },
+              "Work in progress")]
+          : []),
         ...[...known.values()].map((tag) => tagButton(kind, tag, `filter:${kind}:${tag}`)));
-      const filtering = filter.tags.size > 0 || filter.text.trim() !== "";
+      const filtering = filter.unfinished || filter.tags.size > 0 || filter.text.trim() !== "";
       const status = $(".filter-status", bar);
       status.hidden = !filtering;
       if (filtering) {
@@ -1070,8 +1257,7 @@
   function refreshLists() {
     keepingFocus(() => {
       renderFilters();
-      renderConcretes();
-      renderIngredients();
+      renderLists();
       paint();
     });
   }
@@ -1084,8 +1270,173 @@
   }
 
   function clearFilter(kind) {
-    ui.filters[kind] = { text: "", tags: new Set() };
+    ui.filters[kind] = { text: "", tags: new Set(), unfinished: false };
     $(".panel-search", panels[kind].filter).value = "";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rearranging and renaming
+  //
+  // A list's order is the order the items are in, and groups show in the
+  // order they first appear, so moving things is a matter of reordering items.
+  // Publish sends the new order along with everything else.
+
+  // Puts an item just before or after another one, joining that one's group.
+  // Every group stays where it is, even one that loses its first item.
+  function moveItem(kind, id, targetId, after) {
+    const item = findItem(kind, id);
+    const target = findItem(kind, targetId);
+    if (!item || !target || item === target) return;
+    const moved = groupKeyOf(item) === groupKeyOf(target) ? item : withGroup(item, target.group);
+    const groups = groupsIn(doc[kind]).map((group) => group.items.filter((x) => x !== item));
+    const into = groups.find((items) => items.includes(target));
+    into.splice(into.indexOf(target) + (after ? 1 : 0), 0, moved);
+    if (!rearrange(kind, groups.flat()) || moved === item) return;
+    const group = groupsIn([moved])[0].name;
+    showToast(group ? `Moved ${item.name} into ${group}.` : `Took ${item.name} out of its group.`,
+      { label: "Undo", run: undo });
+  }
+
+  // Puts a whole group just before or after another. Anything without a group
+  // stays at the top.
+  function moveGroup(kind, key, targetKey, after) {
+    const groups = groupsIn(doc[kind]);
+    const moving = groups.find((group) => group.key === key);
+    const rest = groups.filter((group) => group !== moving);
+    const target = rest.findIndex((group) => group.key === targetKey);
+    if (!moving || !key || target === -1) return;
+    rest.splice(Math.max(target + (after ? 1 : 0), rest[0].key === "" ? 1 : 0), 0, moving);
+    rearrange(kind, rest.flatMap((group) => group.items));
+  }
+
+  // Each group's items end up next to each other, in the order shown. False
+  // if nothing moved.
+  function rearrange(kind, list) {
+    const next = groupsIn(list).flatMap((group) => group.items);
+    if (next.every((item, i) => item === doc[kind][i])) return false;
+    commit((d) => {
+      d[kind] = next;
+    });
+    return true;
+  }
+
+  function withGroup(item, group) {
+    const next = { ...item, group };
+    if (!group) delete next.group;
+    return next;
+  }
+
+  // A list with an edited item in its place. One that's changed group goes to
+  // the end of its new group (a brand new group goes after the rest), and
+  // every other group stays where it was.
+  function withEdited(list, item) {
+    const old = list.find((x) => x.id === item.id);
+    if (groupKeyOf(old) === groupKeyOf(item)) return list.map((x) => (x === old ? item : x));
+    const groups = groupsIn(list).map((group) => ({ key: group.key, items: group.items.filter((x) => x !== old) }));
+    const home = groups.find((group) => group.key === groupKeyOf(item));
+    if (home) home.items.push(item);
+    return [...groups.flatMap((group) => group.items), ...(home ? [] : [item])];
+  }
+
+  // What's being dragged within a list: { kind, id } for a row, or { kind, group }
+  // for a whole group by its heading.
+  let listDrag = null;
+
+  // Where a dragged row or group would land: just before or after `node`, or
+  // null if not there.
+  function dropSpot(kind, event) {
+    const { list } = panels[kind];
+    const y = event.clientY;
+    const below = (nodes) => nodes.find((node) => y < node.getBoundingClientRect().bottom) ?? nodes.at(-1);
+    const half = (node) => {
+      const box = node.getBoundingClientRect();
+      return y > box.top + box.height / 2;
+    };
+    if (listDrag.group !== undefined) {
+      const target = below($$(".group[data-group]", list));
+      return target ? { node: target, after: half(target) } : null;
+    }
+    // Over a group's heading, it goes in at the top of that group.
+    const head = event.target.closest?.(".group-head");
+    const first = head && $(".row", head.closest(".group"));
+    if (first) return { node: first, after: false };
+    const target = below($$(".row", list));
+    return target ? { node: target, after: half(target) } : null;
+  }
+
+  // A line between rows or groups shows where the dragged one would go.
+  let dropMark = null;
+
+  function showDropSpot(spot) {
+    dropMark?.classList.remove("drop-before", "drop-after");
+    dropMark = spot?.node ?? null;
+    dropMark?.classList.add(spot.after ? "drop-after" : "drop-before");
+  }
+
+  function drop(kind, spot) {
+    if (listDrag.group !== undefined) moveGroup(kind, listDrag.group, spot.node.dataset.group, spot.after);
+    else moveItem(kind, listDrag.id, spot.node.dataset.id, spot.after);
+    // A row that's moved shows where it went.
+    if (listDrag.id) flash(rowNode(kind, listDrag.id));
+  }
+
+  // Alt with the up or down arrow moves the focused row within its group, or
+  // the focused group heading past the next group.
+  function moveWithKeys(kind, event) {
+    const step = event.key === "ArrowUp" ? -1 : 1;
+    const row = event.target.closest(".row-main") && event.target.closest(".row");
+    const section = event.target.closest(".group-label") && event.target.closest(".group");
+    if (row) {
+      const rows = $$(".row", row.parentElement);
+      const next = rows[rows.indexOf(row) + step];
+      if (next) moveItem(kind, row.dataset.id, next.dataset.id, step > 0);
+      revealRows([rowNode(kind, row.dataset.id)]);
+    } else if (section) {
+      const groups = $$(".group[data-group]", panels[kind].list);
+      const next = groups[groups.indexOf(section) + step];
+      if (next) moveGroup(kind, section.dataset.group, next.dataset.group, step > 0);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  }
+
+  function startRename(kind, key) {
+    const group = groupsIn(doc[kind]).find((g) => g.key === key);
+    if (!group?.name) return;
+    ui.renaming = { kind, key, text: group.name };
+    refreshLists();
+    const input = $(".group-input", panels[kind].list);
+    input?.focus();
+    input?.select();
+  }
+
+  // Renaming a group renames it on everything in it. A name another group
+  // already has puts the two together, under that one's spelling.
+  function finishRename(keep) {
+    const renaming = ui.renaming;
+    if (!renaming) return;
+    ui.renaming = null;
+    const { kind, key } = renaming;
+    const groups = groupsIn(doc[kind]);
+    const group = groups.find((g) => g.key === key);
+    const typed = renaming.text.trim().replace(/\s+/g, " ");
+    const other = groups.find((g) => g.key === typed.toLowerCase() && g !== group);
+    const name = other?.name ?? typed;
+    if (keep && group && name && name !== group.name) {
+      const renamed = group.items.map((item) => ({ ...item, group: name }));
+      commit((d) => {
+        // Joining another group goes on the end of it, where that group is.
+        d[kind] = other
+          ? groups.flatMap((g) => (g === group ? [] : g === other ? [...g.items, ...renamed] : g.items))
+          : d[kind].map((item) => renamed.find((x) => x.id === item.id) ?? item);
+      });
+      if (other) showToast(`Put everything from ${group.name} into ${name}.`, { label: "Undo", run: undo });
+    } else {
+      refreshLists();
+    }
+    const focusKey = `group:${kind}:${keep && name ? name.toLowerCase() : key}`;
+    $(`[data-focus-key="${CSS.escape(focusKey)}"]`, panels[kind].list)?.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -1100,7 +1451,7 @@
     ui.page[kind] = id;
     if (kind === "concretes") ui.selectedId = id;
     // Back from the page lands on the row, open, with its See more.
-    else ui.openIngredients.add(id);
+    else ui.openIngredient = id;
     render();
     box.scrollTop = 0;
     $(`[data-focus-key="back:${kind}"]`)?.focus({ preventScroll: true });
@@ -1141,7 +1492,9 @@
         concrete ? "All concretes" : "All ingredients"),
       h("div", { class: "page-head" },
         bubble(item),
-        h("h3", { class: "page-title", id: `${kind}-page-title` }, item.name)),
+        h("h3", { class: item.unfinished ? "page-title is-unfinished" : "page-title", id: `${kind}-page-title` },
+          item.name),
+        item.unfinished ? h("p", { class: "page-wip" }, "Work in progress") : null),
       item.description ? h("p", { class: "page-desc" }, item.description) : null,
       tags.length
         ? h("section", { class: "page-section" },
@@ -1186,12 +1539,17 @@
         name: concrete?.name ?? "",
         description: concrete?.description ?? "",
         notes: concrete?.notes ?? "",
-        tags: tagsOf(concrete).join(", "),
+        tags: tagsOf(concrete),
         icon: concrete?.icon ?? "",
+        group: concrete?.group ?? "",
+        unfinished: Boolean(concrete?.unfinished),
         picked: new Set(concrete?.ingredients),
         error: "",
       };
       ui.selectedId = null;
+      // The form is on the left, and its ingredients get ticked on the right.
+      showPanel("concretes");
+      showPanel("ingredients");
       render();
     }
     $("#concrete-name").focus();
@@ -1216,6 +1574,7 @@
 
   async function saveConcreteDraft() {
     const draft = ui.concreteDraft;
+    draft.addTypedTag?.();
     if (!(await iconReady(draft)) || ui.concreteDraft !== draft) return;
     const name = draft.name.trim();
     const ingredients = pickedIds(draft);
@@ -1235,10 +1594,12 @@
     const item = withFields(draft.editing ? findConcrete(id) : { id }, {
       name,
       description: draft.description.trim(),
-      notes: draft.notes.trim(),
-      tags: parseTags(draft.tags, "concretes", draft.editing),
       icon: draft.icon,
+      group: cleanGroup(draft.group, "concretes", draft.editing),
       ingredients,
+      notes: draft.notes.trim(),
+      tags: cleanTags(draft.tags, "concretes", draft.editing),
+      unfinished: draft.unfinished,
     });
     ui.concreteDraft = null;
     ui.selectedId = id;
@@ -1247,7 +1608,7 @@
     if (!matchesFilter("concretes", item)) clearFilter("concretes");
     if (draft.editing) {
       commit((d) => {
-        d.concretes = d.concretes.map((c) => (c.id === id ? item : c));
+        d.concretes = withEdited(d.concretes, item);
       });
     } else {
       commit((d) => d.concretes.push(item));
@@ -1260,27 +1621,37 @@
     revealRows($$(".row.is-lit", els.ingredientList));
   }
 
-  // An item with a form's fields, leaving out empty notes or tags it never had,
-  // so that saving without a change doesn't count as one.
+  // An item with a form's fields, leaving out empty ones it never had, so that
+  // saving without a change doesn't count as one. Work in progress is only
+  // written down while it's ticked.
   function withFields(item, fields) {
     const next = { ...item, ...fields };
-    for (const key of ["notes", "tags"]) {
-      if (!fields[key].length && !Object.hasOwn(item, key)) delete next[key];
+    for (const [key, value] of Object.entries(fields)) {
+      const empty = value === "" || value === false || (Array.isArray(value) && !value.length);
+      if (empty && (key === "unfinished" || !Object.hasOwn(item, key))) delete next[key];
     }
     return next;
   }
 
-  // Tags as typed, with commas between them, in the spelling already in use for
-  // any that are on another item, so one tag doesn't become two.
-  function parseTags(text, kind, exceptId) {
+  // Tags without repeats, in the spelling already in use for any that are on
+  // another item, so one tag doesn't become two.
+  function cleanTags(list, kind, exceptId) {
     const known = knownTags(kind, exceptId);
     const tags = new Map();
-    for (const part of text.split(",")) {
-      const tag = part.trim();
+    for (const text of list) {
+      const tag = text.trim().replace(/\s+/g, " ");
       const key = tag.toLowerCase();
       if (tag && !tags.has(key)) tags.set(key, known.get(key) ?? tag);
     }
     return [...tags.values()];
+  }
+
+  // A group name as typed, in the spelling its group already has, so that
+  // "binder" joins Binder rather than starting another.
+  function cleanGroup(text, kind, exceptId) {
+    const name = text.trim().replace(/\s+/g, " ");
+    const others = doc[kind].filter((item) => item.id !== exceptId);
+    return groupsIn(others).find((group) => group.key === name.toLowerCase())?.name ?? name;
   }
 
   function deleteConcrete(id) {
@@ -1302,11 +1673,13 @@
         name: ingredient?.name ?? "",
         description: ingredient?.description ?? "",
         notes: ingredient?.notes ?? "",
-        tags: tagsOf(ingredient).join(", "),
+        tags: tagsOf(ingredient),
         icon: ingredient?.icon ?? "",
         group: ingredient?.group ?? "",
+        unfinished: Boolean(ingredient?.unfinished),
         error: "",
       };
+      showPanel("ingredients");
       render();
     }
     $("#ingredient-name").focus();
@@ -1322,6 +1695,7 @@
 
   async function saveIngredientDraft() {
     const draft = ui.ingredientDraft;
+    draft.addTypedTag?.();
     if (!(await iconReady(draft)) || ui.ingredientDraft !== draft) return;
     const name = draft.name.trim();
     draft.error = !name
@@ -1339,10 +1713,11 @@
     const item = withFields(draft.editing ? findIngredient(id) : { id }, {
       name,
       description: draft.description.trim(),
-      notes: draft.notes.trim(),
-      tags: parseTags(draft.tags, "ingredients", draft.editing),
       icon: draft.icon,
-      group: draft.group.trim(),
+      group: cleanGroup(draft.group, "ingredients", draft.editing),
+      notes: draft.notes.trim(),
+      tags: cleanTags(draft.tags, "ingredients", draft.editing),
+      unfinished: draft.unfinished,
     });
     ui.ingredientDraft = null;
     // An ingredient page that was open shows the one just saved, unless the list
@@ -1350,9 +1725,9 @@
     if (ui.page.ingredients && !ui.concreteDraft) ui.page.ingredients = id;
     if (!matchesFilter("ingredients", item)) clearFilter("ingredients");
     if (draft.editing) {
-      ui.openIngredients.add(id);
+      ui.openIngredient = id;
       commit((d) => {
-        d.ingredients = d.ingredients.map((i) => (i.id === id ? item : i));
+        d.ingredients = withEdited(d.ingredients, item);
       });
     } else {
       ui.concreteDraft?.picked.add(id);
@@ -1374,7 +1749,7 @@
     const ingredient = findIngredient(id);
     const users = doc.concretes.filter((c) => c.ingredients.includes(id)).length;
     ui.ingredientDraft = null;
-    ui.openIngredients.delete(id);
+    if (ui.openIngredient === id) ui.openIngredient = null;
     commit((d) => {
       d.ingredients = d.ingredients.filter((i) => i.id !== id);
       d.concretes = d.concretes.map((c) =>
@@ -1395,6 +1770,8 @@
         field("Notes", notesField("concrete-notes", draft)),
         tagsField("concrete-tags", draft, "concretes"),
         iconField("concrete-icon", draft),
+        groupField("concrete-group", draft, "concretes"),
+        unfinishedField("concrete-unfinished", draft),
       ],
       onSave: saveConcreteDraft,
       onCancel: closeConcreteDraft,
@@ -1403,10 +1780,6 @@
   }
 
   function ingredientDraftForm(draft) {
-    const groupNames = ingredientGroups().map((g) => g.name).filter(Boolean);
-    const group = textField("ingredient-group", draft, "group");
-    group.setAttribute("list", "ingredient-group-options");
-
     return draftForm({
       title: draft.editing ? "Edit ingredient" : "New ingredient",
       fields: [
@@ -1415,8 +1788,8 @@
         field("Notes", notesField("ingredient-notes", draft)),
         tagsField("ingredient-tags", draft, "ingredients"),
         iconField("ingredient-icon", draft),
-        field("Group (optional)", group,
-          h("datalist", { id: "ingredient-group-options" }, groupNames.map((name) => h("option", { value: name })))),
+        groupField("ingredient-group", draft, "ingredients"),
+        unfinishedField("ingredient-unfinished", draft),
       ],
       onSave: saveIngredientDraft,
       onCancel: closeIngredientDraft,
@@ -1433,35 +1806,116 @@
     return control;
   }
 
-  // Tags are typed with commas between them. The ones already in use on other
-  // items are there to click, which keeps their spelling the same.
+  // Every tag already used in the list is there to click on or off, which keeps
+  // their spelling the same. A new one is typed into the box after them and
+  // goes in with Enter or a comma, or on moving on to something else.
   function tagsField(id, draft, kind) {
-    const input = textField(id, draft, "tags");
-    input.maxLength = 500;
-    input.placeholder = "Separate with commas";
-    const typed = () => draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
-    const offers = [...knownTags(kind, draft.editing).values()].map((tag) =>
-      h("button", {
-          type: "button",
-          class: "tag",
-          onclick: () => {
-            const current = typed();
-            const others = current.filter((other) => !sameName(other, tag));
-            draft.tags = (others.length < current.length ? others : [...current, tag]).join(", ");
-            input.value = draft.tags;
-            showPressed();
-          },
-        },
-        tag));
+    const has = (tag) => draft.tags.some((other) => sameName(other, tag));
+    const offers = new Map(knownTags(kind, draft.editing));
+    for (const tag of draft.tags) {
+      if (!offers.has(tag.toLowerCase())) offers.set(tag.toLowerCase(), tag);
+    }
+    const row = h("div", { class: "tag-row tag-picker" });
+    const input = h("input", {
+      class: "tag-new",
+      id,
+      type: "text",
+      maxlength: "40",
+      autocomplete: "off",
+      placeholder: "New tag",
+      "aria-label": "New tag",
+      "aria-describedby": `${id}-note`,
+    });
+
     const showPressed = () => {
-      const current = typed();
-      for (const offer of offers) {
-        offer.setAttribute("aria-pressed", String(current.some((tag) => sameName(tag, offer.textContent))));
-      }
+      for (const chip of $$(".tag", row)) chip.setAttribute("aria-pressed", String(has(chip.textContent)));
     };
-    input.addEventListener("input", showPressed);
+    const chip = (tag) => h("button", {
+        type: "button",
+        class: "tag",
+        onclick: () => {
+          draft.tags = has(tag) ? draft.tags.filter((other) => !sameName(other, tag)) : [...draft.tags, tag];
+          showPressed();
+        },
+      },
+      tag);
+    // Room for what's typed, so the box grows rather than scrolling.
+    const fit = () => {
+      input.size = Math.max(8, input.value.length + 1);
+    };
+    // A tag that's there already is turned on rather than added twice.
+    const add = (text) => {
+      const tag = text.trim().replace(/\s+/g, " ");
+      if (!tag) return;
+      const existing = $$(".tag", row).find((other) => sameName(other.textContent, tag));
+      if (!existing) input.before(chip(tag));
+      if (!has(tag)) draft.tags = [...draft.tags, existing?.textContent ?? tag];
+      showPressed();
+    };
+    const addTyped = () => {
+      add(input.value);
+      input.value = "";
+      fit();
+    };
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === ",") {
+        event.preventDefault();
+        addTyped();
+      } else if (event.key === "Escape" && input.value) {
+        // Clears the box rather than closing the form.
+        event.preventDefault();
+        event.stopPropagation();
+        input.value = "";
+        fit();
+      }
+    });
+    input.addEventListener("input", () => {
+      // Pasted text with commas in it makes a tag of each part.
+      const parts = input.value.split(",");
+      if (parts.length > 1) {
+        input.value = parts.pop();
+        for (const part of parts) add(part);
+      }
+      fit();
+    });
+    input.addEventListener("blur", addTyped);
+    // Save picks up anything typed but not added yet.
+    draft.addTypedTag = addTyped;
+
+    row.append(...[...offers.values()].sort((a, b) => a.localeCompare(b)).map(chip), input);
     showPressed();
-    return field("Tags (optional)", input, offers.length ? h("div", { class: "tag-row" }, offers) : null);
+    fit();
+    return h("div", { class: "draft-field", role: "group", "aria-labelledby": `${id}-label` },
+      h("span", { class: "draft-label", id: `${id}-label` }, "Tags (optional)"),
+      row,
+      h("p", { class: "draft-note", id: `${id}-note` }, "Click a tag to add or remove it. Type a new one and press Enter."));
+  }
+
+  // The names of the list's other groups are offered while typing.
+  function groupField(id, draft, kind) {
+    const input = textField(id, draft, "group");
+    input.setAttribute("list", `${id}-options`);
+    const names = groupsIn(doc[kind]).map((group) => group.name).filter(Boolean);
+    return field("Group (optional)", input,
+      h("datalist", { id: `${id}-options` }, names.map((name) => h("option", { value: name }))));
+  }
+
+  function unfinishedField(id, draft) {
+    const box = h("input", {
+      type: "checkbox",
+      class: "draft-checkbox",
+      id,
+      "aria-describedby": `${id}-note`,
+      onchange: (event) => {
+        draft.unfinished = event.target.checked;
+      },
+    });
+    box.checked = draft.unfinished;
+    return h("div", { class: "draft-check" },
+      box,
+      h("label", { class: "draft-check-label", for: id }, "Still a work in progress"),
+      h("p", { class: "draft-note", id: `${id}-note` }, "Its name shows in italics until this is unticked."));
   }
 
   function textField(id, draft, key, multiline = false) {
@@ -1617,12 +2071,12 @@
     flash(card);
   }
 
-  // The first spot in the visible part of the paper, reading left to right and
-  // top to bottom, where a card fits without touching another or the toolbar.
+  // The spot nearest the middle of the view where a card fits without touching
+  // another or the toolbar, favouring side by side over one above another.
   function freeSpot(kind) {
     // A concrete's bubble is a size up from an ingredient's (see .card--concrete).
     const [width, height] = kind === "concrete" ? [GRID * 6, GRID * 7] : [GRID * 5, GRID * 6];
-    const { scrollLeft, scrollTop, clientWidth } = els.paper;
+    const { scrollLeft, scrollTop, clientWidth, clientHeight } = els.paper;
     const frame = els.paper.getBoundingClientRect();
     // Where a control sits over the paper, in the paper's own units.
     const onPaper = (node) => {
@@ -1645,15 +2099,43 @@
       taken.every((r) =>
         x >= r.x + r.w + GRID || x + width + GRID <= r.x || y >= r.y + r.h + GRID || y + height + GRID <= r.y);
 
-    const left = snap(scrollLeft / ui.zoom) + GRID * 2;
-    const top = snap(scrollTop / ui.zoom) + GRID * 2;
-    const right = Math.max(left, (scrollLeft + clientWidth) / ui.zoom - width - GRID * 2);
-    for (let y = top; y < top + GRID * 400; y += GRID) {
+    const left = snap(scrollLeft / ui.zoom) + GRID;
+    const top = snap(scrollTop / ui.zoom) + GRID;
+    const right = Math.max(left, (scrollLeft + clientWidth) / ui.zoom - width - GRID);
+    const bottom = Math.max(top, (scrollTop + clientHeight) / ui.zoom - height - GRID);
+    const middle = {
+      x: (scrollLeft + clientWidth / 2) / ui.zoom - width / 2,
+      y: (scrollTop + clientHeight / 2) / ui.zoom - height / 2,
+    };
+    // Zoomed out, every other spot (or fewer) is plenty to try.
+    const step = GRID * Math.max(1, Math.round(1 / ui.zoom));
+    const spots = [];
+    for (let y = top; y <= bottom; y += step) {
+      for (let x = left; x <= right; x += step) {
+        spots.push({ x, y, away: Math.hypot(x - middle.x, (y - middle.y) * 1.5) });
+      }
+    }
+    const spot = spots.sort((a, b) => a.away - b.away).find(({ x, y }) => fits(x, y));
+    if (spot) return { x: spot.x, y: spot.y };
+    // The view is full, so the first free spot below it.
+    for (let y = snap(bottom); y < bottom + GRID * 400; y += GRID) {
       for (let x = left; x <= right; x += GRID) {
         if (fits(x, y)) return { x, y };
       }
     }
     return { x: left, y: top };
+  }
+
+  // Clicking a bubble selects it alone: a concrete lights up with its mix, and an
+  // ingredient opens in its list.
+  function selectCard(item) {
+    if (item.kind === "concrete") {
+      ui.openIngredient = null;
+      select(item.ref);
+    } else {
+      select(null);
+      openIngredient(item.ref);
+    }
   }
 
   function removeCard(id, keepFocusOnCards) {
@@ -1711,9 +2193,7 @@
           d.canvas.push({ ...item, ...to });
         });
       } else if (!moved) {
-        // A click selects a concrete. On an ingredient it just moves on from
-        // whatever was selected, leaving that bubble with the focus ring.
-        select(item.kind === "concrete" ? item.ref : null);
+        selectCard(item);
       }
     };
     card.addEventListener("pointerup", finish, { signal: done.signal });
@@ -1728,9 +2208,9 @@
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       removeCard(item.id, true);
-    } else if ((event.key === "Enter" || event.key === " ") && item.kind === "concrete") {
+    } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      select(item.ref);
+      selectCard(item);
     } else if (Object.hasOwn(NUDGES, event.key)) {
       event.preventDefault();
       const step = event.shiftKey ? GRID * 5 : GRID;
@@ -1768,10 +2248,15 @@
   function applyZoom() {
     const percent = `${Math.round(ui.zoom * 100)}%`;
     els.cards.style.transform = `scale(${ui.zoom})`;
-    // The dots stay on the grid, but drop to every 2nd or 4th so that zooming
-    // out doesn't turn the paper grey.
-    const every = ui.zoom < 0.5 ? 4 : ui.zoom < 0.75 ? 2 : 1;
-    els.sheet.style.setProperty("--dot-step", `${GRID * ui.zoom * every}px`);
+    // Every dot is on the grid, and every 5th is a little stronger. Zooming
+    // out, the ones in between fade away as they crowd together, and the dots
+    // grow a touch zooming in, so the paper always shows how close it is.
+    const step = GRID * ui.zoom;
+    const fade = Math.min(1, Math.max(0, (step - 6) / 10)); // gone at 6px apart, all there by 16px
+    const size = Math.min(1.5, Math.max(0.8, Math.sqrt(ui.zoom)));
+    els.sheet.style.setProperty("--dot-step", `${step}px`);
+    els.sheet.style.setProperty("--dot-fade", `${Math.round(fade * 100)}%`);
+    els.sheet.style.setProperty("--dot-r", `${(1.1 * size).toFixed(2)}px`);
     els.zoomLevel.textContent = percent;
     els.zoomLevel.setAttribute("aria-label", `Zoomed to ${percent}. Back to 100%`);
     els.zoomOut.setAttribute("aria-disabled", String(ui.zoom <= MIN_ZOOM));
@@ -1852,12 +2337,79 @@
   function onPaperPointerEnd(event) {
     if (!pressed.delete(event.pointerId)) return;
     if (pan && !pan.moved && event.type === "pointerup") {
-      select(null);
+      clearSelection();
       els.paper.focus({ preventScroll: true });
     }
     pan = null;
     if (pressed.size < 2) pinch = null;
     els.workspace.classList.remove("is-panning");
+  }
+
+  // ---------------------------------------------------------------------------
+  // View
+  //
+  // Which lists are hidden, and dark or light paper. These belong to the
+  // browser rather than the data, so undo leaves them alone. A script at the
+  // top of index.html puts them back before the page first draws.
+
+  const darkScheme = matchMedia("(prefers-color-scheme: dark)");
+  const view = readView();
+
+  function readView() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY));
+      return {
+        theme: saved?.theme === "dark" || saved?.theme === "light" ? saved.theme : null,
+        hide: Array.isArray(saved?.hide) ? KINDS.filter((kind) => saved.hide.includes(kind)) : [],
+      };
+    } catch {
+      return { theme: null, hide: [] };
+    }
+  }
+
+  function writeView() {
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(view));
+    } catch {
+      // Forgotten on reload, which is no great loss.
+    }
+  }
+
+  // The paper follows the computer's own dark or light setting until it's
+  // switched here.
+  const isDark = () => (view.theme ? view.theme === "dark" : darkScheme.matches);
+
+  function applyView() {
+    const root = document.documentElement;
+    if (view.theme) root.dataset.theme = view.theme;
+    else delete root.dataset.theme;
+    if (view.hide.length) root.dataset.hide = view.hide.join(" ");
+    else delete root.dataset.hide;
+    for (const kind of KINDS) {
+      const hidden = view.hide.includes(kind);
+      const { toggle } = panels[kind];
+      toggle.setAttribute("aria-expanded", String(!hidden));
+      toggle.setAttribute("aria-label", `${hidden ? "Show" : "Hide"} ${kind}`);
+      toggle.title = hidden ? `Show ${kind}` : `Hide ${kind}`;
+    }
+    els.theme.setAttribute("aria-pressed", String(isDark()));
+  }
+
+  // What's on the paper stays put on screen while the paper widens or narrows.
+  function setPanelHidden(kind, hidden) {
+    if (view.hide.includes(kind) === hidden) return;
+    const before = els.paper.getBoundingClientRect();
+    view.hide = KINDS.filter((k) => (k === kind ? hidden : view.hide.includes(k)));
+    applyView();
+    writeView();
+    const after = els.paper.getBoundingClientRect();
+    els.paper.scrollLeft += after.left - before.left;
+    els.paper.scrollTop += after.top - before.top;
+    fitSheet();
+  }
+
+  function showPanel(kind) {
+    setPanelHidden(kind, false);
   }
 
   // ---------------------------------------------------------------------------
@@ -1919,7 +2471,10 @@
     });
     filter.addEventListener("click", (event) => {
       const tag = event.target.closest(".tag");
-      if (tag) toggleFilterTag(kind, tag.dataset.tag);
+      if (tag?.dataset.filter === "unfinished") {
+        ui.filters[kind].unfinished = !ui.filters[kind].unfinished;
+        refreshLists();
+      } else if (tag) toggleFilterTag(kind, tag.dataset.tag);
       else if (event.target.closest(".filter-clear")) {
         clearFilter(kind);
         refreshLists();
@@ -1928,13 +2483,73 @@
     });
   }
 
-  for (const list of [els.concreteList, els.ingredientList]) {
+  for (const kind of KINDS) {
+    const { list } = panels[kind];
+
+    // Double-clicking a group's name renames it, and so do Enter and F2.
+    list.addEventListener("dblclick", (event) => {
+      const label = event.target.closest(".group-label");
+      if (label) startRename(kind, label.closest(".group").dataset.group);
+    });
+    list.addEventListener("click", (event) => {
+      const label = event.target.closest(".group-label");
+      // `detail` is 0 when the button was pressed from the keyboard.
+      if (label && event.detail === 0) startRename(kind, label.closest(".group").dataset.group);
+    });
+    list.addEventListener("input", (event) => {
+      if (event.target.matches(".group-input") && ui.renaming) ui.renaming.text = event.target.value;
+    });
+    list.addEventListener("keydown", (event) => {
+      if (event.target.matches(".group-input")) {
+        if (event.key === "Enter" || event.key === "Escape") {
+          event.preventDefault();
+          finishRename(event.key === "Enter");
+        }
+      } else if (event.key === "F2" && event.target.matches(".group-label")) {
+        event.preventDefault();
+        startRename(kind, event.target.closest(".group").dataset.group);
+      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        moveWithKeys(kind, event);
+      }
+    });
+    // Clicking away keeps the new name.
+    list.addEventListener("focusout", (event) => {
+      if (event.target.matches(".group-input") && event.target.isConnected) finishRename(true);
+    });
+
+    // Rows drag onto the paper, or up and down their list. Group headings
+    // drag up and down to move the whole group.
     list.addEventListener("dragstart", (event) => {
+      const head = event.target.closest?.(".group-head");
       const row = event.target.closest?.(".row");
-      if (!row) return;
-      event.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ kind: row.dataset.kind, ref: row.dataset.id }));
-      event.dataTransfer.setData("text/plain", $(".row-name", row).textContent);
-      event.dataTransfer.effectAllowed = "copy";
+      if (head) {
+        listDrag = { kind, group: head.closest(".group").dataset.group };
+        event.dataTransfer.setData("text/plain", head.textContent);
+        event.dataTransfer.effectAllowed = "move";
+      } else if (row) {
+        listDrag = { kind, id: row.dataset.id };
+        event.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ kind: row.dataset.kind, ref: row.dataset.id }));
+        event.dataTransfer.setData("text/plain", $(".row-name", row).firstChild.textContent);
+        event.dataTransfer.effectAllowed = "copyMove";
+      }
+    });
+    list.addEventListener("dragover", (event) => {
+      if (listDrag?.kind !== kind) return;
+      const spot = dropSpot(kind, event);
+      showDropSpot(spot);
+      if (!spot) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    list.addEventListener("dragleave", (event) => {
+      if (!list.contains(event.relatedTarget)) showDropSpot(null);
+    });
+    list.addEventListener("drop", (event) => {
+      const spot = listDrag?.kind === kind ? dropSpot(kind, event) : null;
+      showDropSpot(null);
+      if (!spot) return;
+      event.preventDefault();
+      drop(kind, spot);
     });
   }
 
@@ -1964,7 +2579,11 @@
     });
   });
 
-  document.addEventListener("dragend", () => els.workspace.classList.remove("is-drop-target"));
+  document.addEventListener("dragend", () => {
+    els.workspace.classList.remove("is-drop-target");
+    showDropSpot(null);
+    listDrag = null;
+  });
 
   // First, so that a second finger on a card starts a pinch rather than a drag.
   els.paper.addEventListener("pointerdown", onPaperPointerDown, { capture: true });
@@ -2008,6 +2627,16 @@
     if (button) removeCard(button.closest(".card").dataset.id, event.detail === 0);
   });
 
+  for (const kind of KINDS) {
+    panels[kind].toggle.addEventListener("click", () => setPanelHidden(kind, !view.hide.includes(kind)));
+  }
+  els.theme.addEventListener("click", () => {
+    view.theme = isDark() ? "light" : "dark";
+    applyView();
+    writeView();
+  });
+  darkScheme.addEventListener("change", applyView);
+
   els.addConcrete.addEventListener("click", () => openConcreteDraft());
   els.addIngredient.addEventListener("click", () => openIngredientDraft());
   els.clear.addEventListener("click", () => {
@@ -2040,6 +2669,7 @@
       else if (ui.page.ingredients) closePage("ingredients");
       else if (ui.page.concretes) closePage("concretes");
       else if (ui.selectedId) select(null);
+      else if (ui.openIngredient) openIngredient(null);
     }
   });
 
@@ -2115,6 +2745,8 @@
   els.zoomOut.title = `Zoom out (or ${zoomHint})`;
   els.zoomIn.title = `Zoom in (or ${zoomHint})`;
   checkSeed();
+  applyView();
   applyZoom();
   render();
+  centreView();
 })();

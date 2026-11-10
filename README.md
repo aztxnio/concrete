@@ -16,6 +16,9 @@ hand. To change it:
 
    Each one also has its own page, opened with **See more**. The **Notes** box
    in its form is the longer write-up shown there.
+
+   Tick **Still a work in progress** in its form while it isn't finished. Its
+   name then shows in italics until that's unticked.
 2. Click **Publish**. It sits just above the toolbar and shows how many
    changes haven't been published yet.
 3. The first time, it asks for the GitHub project and a key (see below). On the
@@ -30,17 +33,37 @@ they were made in until they're published, so do your editing in one browser.
 Each list has a search box that looks through names, descriptions, notes and
 tags, and for concretes, the names of their ingredients too.
 
-To tag something, type into **Tags** in its form, with commas between the tags.
-A button for each tag then appears above the list. Click one to see only what
-has that tag, or several to narrow it further. **Clear** shows everything again.
+To tag something, use **Tags** in its form. Every tag already in use is there
+to click on or off, and a new one goes in the **New tag** box (press Enter to
+add it). A button for each tag also appears above the list. Click one to see
+only what has that tag, or several to narrow it further. **Work in progress**
+there shows only what's unfinished, and **Clear** shows everything again.
+
+## Arranging the lists
+
+- Both lists can have groups. Type a group's name into **Group** in the form,
+  and everything with that name is listed together under it.
+- Drag a row up or down to move it, including into another group. Drag a
+  group's heading to move the whole group.
+- Double-click a group's name to rename it for everything in it. Renaming it
+  to another group's name puts the two together.
+- From the keyboard, Alt with the up or down arrow moves the selected row or
+  group, and Enter on a group's name renames it.
+
+The order is published along with everything else.
 
 ## The paper
 
+- It opens in the middle, on whatever's been put there.
 - Drag things onto it from the lists, or use their **+** button.
 - Click a bubble to select it, and click empty paper to clear the selection.
 - Drag empty paper to move around.
 - Zoom with **−** and **+** in the bottom right corner, by pinching, or by holding
   Ctrl (⌘ on a Mac) and scrolling. The percentage takes it back to 100%.
+- The half-filled circle beside them switches between dark and light paper.
+  Until it's used, the paper follows the computer's own setting.
+- The arrow by each list's title hides the list, to give the paper more room.
+  Click the strip it leaves to bring it back.
 
 ## Making the key
 

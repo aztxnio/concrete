@@ -10,12 +10,15 @@
 //
 // `icon` is optional: a path to an image (for example "icons/sand.png") or an
 // image data URL. Without one, the item shows a plain circle.
-// `group` is optional too. Ingredients that share a group are listed together
-// under that heading.
+// `group` is optional too. Concretes or ingredients that share a group are
+// listed together under that heading. Both lists show everything in the
+// order it's in here.
 // `notes` is optional as well: the longer write-up on the item's own page,
 // which opens from See more.
 // `tags` is optional too: a list of words to search and filter by, like
 // ["Structural", "Low carbon"].
+// `unfinished: true` marks one as still a work in progress, which shows its
+// name in italics. Leave it out once it's done.
 
 const SEED = {
   concretes: [
