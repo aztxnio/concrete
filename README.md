@@ -62,10 +62,9 @@ The order is published along with everything else.
 ## The table
 
 **Table**, at the top left of the paper, swaps the paper for a table of every
-concrete (down the side) against every ingredient (across the top). A filled
-square means the ingredient goes in, an outlined one means maybe, and a number
-is how many parts. It shows what the lists show, so their searches and tags
-narrow it too. **Paper** goes back.
+concrete (down the side) against every ingredient (across the top), using the
+whole window. A filled square means the ingredient goes in, and an outlined one
+means maybe. **Paper** goes back, and so does adding or editing anything.
 
 ## The paper
 

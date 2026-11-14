@@ -1681,6 +1681,18 @@ textarea.draft-grow.is-used {
   display: none;
 }
 
+/* The table has the whole window: it lists the concretes down its own side,
+   so the lists step aside until the paper's back. */
+:root[data-view="table"] .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "workspace";
+}
+
+:root[data-view="table"] .panel {
+  display: none;
+}
+
 /* The table: every concrete against every ingredient ---------------------- */
 
 .table-view {
@@ -1883,9 +1895,8 @@ textarea.draft-grow.is-used {
   cursor: pointer;
 }
 
-/* Filled with a dot when there's no number of parts, and a maybe gets a
-   question mark, after its parts if it has some. */
-.matrix td.is-yes:not(.has-parts)::after {
+/* A dot when it's in, and a question mark when it's a maybe */
+.matrix td.is-yes::after {
   content: "";
   display: inline-block;
   width: 8px;
@@ -1967,7 +1978,7 @@ textarea.draft-grow.is-used {
 
   /* With both lists hidden they're bars across the top, and the paper gets
      the rest. */
-  :root[data-hide~="concretes"][data-hide~="ingredients"] .app {
+  :root[data-hide~="concretes"][data-hide~="ingredients"]:not([data-view="table"]) .app {
     --concretes-w: minmax(0, 1fr);
     --ingredients-w: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);

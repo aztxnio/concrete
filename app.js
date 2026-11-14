@@ -1162,13 +1162,9 @@
     paintTable();
 
     const draft = ui.concreteDraft;
-    setHint(els.concreteDraft, draft, () => {
-      const yes = usedIds(draft, "yes").length;
-      const maybe = usedIds(draft, "maybe").length;
-      if (!yes && !maybe) return "Click its ingredients on the right. Click one again to make it a maybe.";
-      const counts = listFormat.format([yes ? `${yes} in it` : "", maybe ? `${maybe} maybe` : ""].filter(Boolean));
-      return `${counts[0].toUpperCase()}${counts.slice(1)}. Type how many parts of each in the box beside it, if you know.`;
-    });
+    // How picking works, until something's picked. The ticks say the rest.
+    setHint(els.concreteDraft, draft, () =>
+      draft.uses.size ? "" : "Click its ingredients on the right. Click one again to make it a maybe.");
     setHint(els.ingredientDraft, ui.ingredientDraft, () => {
       if (!draft || ui.ingredientDraft.editing) return "";
       return draft.editing ? "It'll go into the concrete you're editing too." : "It'll go into the new concrete too.";
@@ -1341,7 +1337,6 @@
     keepingFocus(() => {
       renderFilters();
       renderLists();
-      renderTable();
       paint();
     });
   }
@@ -1937,10 +1932,9 @@
         synonymsField("concrete-synonyms", draft),
         field("Description", textField("concrete-description", draft, "description", true)),
         field("Notes", notesField("concrete-notes", draft)),
-        field("Recipe (optional)", growingField("concrete-recipe", draft, "recipe", "How it's mixed, step by step")),
-        field("Chemical composition (optional)",
-          growingField("concrete-composition", draft, "composition", "Like CaO 64%, SiO₂ 21%")),
-        field("Reactions (optional)", growingField("concrete-reactions", draft, "reactions", "Like CaO + H₂O → Ca(OH)₂")),
+        field("Recipe (optional)", growingField("concrete-recipe", draft, "recipe")),
+        field("Chemical composition (optional)", growingField("concrete-composition", draft, "composition")),
+        field("Reactions (optional)", growingField("concrete-reactions", draft, "reactions")),
         tagsField("concrete-tags", draft, "concretes"),
         iconField("concrete-icon", draft),
         groupField("concrete-group", draft, "concretes"),
@@ -1959,8 +1953,7 @@
         field("Name", textField("ingredient-name", draft, "name")),
         field("Description", textField("ingredient-description", draft, "description", true)),
         field("Notes", notesField("ingredient-notes", draft)),
-        field("Chemical composition (optional)",
-          growingField("ingredient-composition", draft, "composition", "Like SiO₂ 99%")),
+        field("Chemical composition (optional)", growingField("ingredient-composition", draft, "composition")),
         tagsField("ingredient-tags", draft, "ingredients"),
         iconField("ingredient-icon", draft),
         groupField("ingredient-group", draft, "ingredients"),
@@ -1977,7 +1970,6 @@
     const control = textField(id, draft, "notes", true);
     control.rows = 8;
     control.maxLength = 20000;
-    control.placeholder = "Shown on its page, under See more";
     return control;
   }
 
@@ -2111,11 +2103,10 @@
   }
 
   // Starts small, and grows to give room once it's used.
-  function growingField(id, draft, key, placeholder) {
+  function growingField(id, draft, key) {
     const control = textField(id, draft, key, true);
     control.rows = 2;
     control.maxLength = 20000;
-    control.placeholder = placeholder;
     control.classList.add("draft-grow");
     const used = () => control.classList.toggle("is-used", control.value.trim() !== "");
     control.addEventListener("input", used);
@@ -2581,23 +2572,19 @@
   // Table
   //
   // Every concrete against every ingredient, in the lists' own order and
-  // groups, narrowed by their searches and tags. A cell is filled where the
-  // ingredient goes in and outlined where it might, with its parts if known.
+  // groups, filling the window. A cell is filled where the ingredient goes in
+  // and outlined where it might. It shows everything whatever the lists are
+  // narrowed to, since they're out of sight while it's up.
 
   function renderTable() {
     if (view.mode !== "table") return;
     crossColumn = null;
-    const shown = (kind) => groupsIn(doc[kind])
-      .map((group) => ({ ...group, items: group.items.filter((item) => matchesFilter(kind, item)) }))
-      .filter((group) => group.items.length);
-    const rowGroups = shown("concretes");
-    const columnGroups = shown("ingredients");
+    const rowGroups = groupsIn(doc.concretes);
+    const columnGroups = groupsIn(doc.ingredients);
     const columns = columnGroups.flatMap((group) => group.items);
     if (!rowGroups.length || !columns.length) {
-      els.tableView.replaceChildren(h("p", { class: "table-empty" },
-        doc.concretes.length && doc.ingredients.length
-          ? "Nothing matches the searches and tags above the lists."
-          : "Add some concretes and ingredients to see them here."));
+      els.tableView.replaceChildren(
+        h("p", { class: "table-empty" }, "Add some concretes and ingredients to see them here."));
       return;
     }
     const nameOf = (item) =>
@@ -2641,17 +2628,14 @@
     paintTable();
   }
 
+  // Just in or maybe, to keep the table easy to read. Parts show when the
+  // pointer rests on a cell, and on the concrete's page.
   function tableCell(concrete, ingredient) {
     const use = useOf(concrete, ingredient.id);
     if (!use) return h("td", { "data-col": ingredient.id });
     const parts = partsOf(concrete, ingredient.id);
     const says = [use === "maybe" ? "maybe" : "in it", parts ? partsText(parts) : ""].filter(Boolean).join(", ");
-    return h("td", {
-        class: parts ? `is-${use} has-parts` : `is-${use}`,
-        "data-col": ingredient.id,
-        title: `${concrete.name}: ${ingredient.name}, ${says}`,
-      },
-      parts ? String(parts) : null,
+    return h("td", { class: `is-${use}`, "data-col": ingredient.id, title: `${concrete.name}: ${ingredient.name}, ${says}` },
       h("span", { class: "sr-only" }, says));
   }
 
@@ -2660,8 +2644,7 @@
     const entry = (key, meaning) => h("div", null, h("dt", null, key), h("dd", null, meaning));
     return h("dl", { class: "matrix-key" },
       entry(h("span", { class: "key is-yes", "aria-hidden": "true" }), "In it"),
-      entry(h("span", { class: "key is-maybe", "aria-hidden": "true" }), "Maybe"),
-      entry(h("span", { class: "key", "aria-hidden": "true" }, "2"), "Parts"));
+      entry(h("span", { class: "key is-maybe", "aria-hidden": "true" }), "Maybe"));
   }
 
   // The selected concrete's row and the open ingredient's column stand out.
@@ -2689,12 +2672,17 @@
     }
   }
 
-  // Paper or table, in the workspace.
+  // Paper, or the table, which takes the whole window. The paper stays where it
+  // was on screen underneath, ready for coming back to.
   function showView(mode) {
     if (view.mode === mode) return;
+    const before = els.paper.getBoundingClientRect();
     view.mode = mode;
     applyView();
     writeView();
+    const after = els.paper.getBoundingClientRect();
+    els.paper.scrollLeft += after.left - before.left;
+    els.paper.scrollTop += after.top - before.top;
     renderTable();
   }
 
@@ -2766,7 +2754,9 @@
     fitSheet();
   }
 
+  // For a form that needs its list, so the table makes way for the paper too.
   function showPanel(kind) {
+    showView("paper");
     setPanelHidden(kind, false);
   }
 
