@@ -475,6 +475,17 @@ button.row-main:hover {
   font-style: italic;
 }
 
+/* With a concrete selected: whether this one's a maybe in it, and how much */
+.row-use {
+  grid-column: 2;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.row-use:empty {
+  display: none;
+}
+
 .row-desc {
   display: none;
   grid-column: 2;
@@ -567,6 +578,16 @@ button.row-main:hover {
 .row.is-selected .row-desc,
 .row.is-lit .row-desc {
   color: color-mix(in oklch, var(--marker-ink) 82%, var(--marker));
+}
+
+/* Maybe in it: outlined with the highlighter instead of filled */
+.row.is-maybe {
+  outline: 2px solid var(--marker);
+  outline-offset: -2px;
+}
+
+.row.is-maybe .row-use {
+  color: var(--marker);
 }
 
 .row.is-selected .row-count {
@@ -688,6 +709,60 @@ button.row-main:hover {
   background: currentColor;
   box-shadow: inset 0 0 0 2px var(--marker);
   opacity: 1;
+}
+
+/* A second click makes it a maybe: the box gets a question mark. */
+.row-main[aria-pressed="mixed"] .row-check {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  opacity: 1;
+}
+
+.row-main[aria-pressed="mixed"] .row-check::after {
+  content: "?";
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* How many parts of it, beside its tick box, once it's in */
+.is-picking .row:is(.is-lit, .is-maybe) .row-main {
+  padding-right: calc(var(--gutter) + 14px + 44px + var(--space-sm));
+}
+
+.row-parts {
+  position: absolute;
+  top: calc(var(--space-xs) + (var(--bubble) - 24px) / 2);
+  right: calc(var(--gutter) + 14px + var(--space-xs));
+  width: 44px;
+  height: 24px;
+  padding: 0 var(--space-2xs);
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.row:not(.is-lit, .is-maybe) .row-parts {
+  display: none;
+}
+
+.row.is-lit .row-parts {
+  color: var(--marker-ink);
+}
+
+.row-parts::placeholder {
+  color: inherit;
+  opacity: 0.6;
+}
+
+.row-parts:focus {
+  outline: none;
+  box-shadow: 0 1px 0 currentColor;
 }
 
 /* Groups. Anything without one sits at the top with no heading. A heading
@@ -829,10 +904,14 @@ button.row-main:hover {
   overflow-wrap: anywhere;
 }
 
-.page-wip {
+.page-wip,
+.page-also {
   margin: calc(var(--space-xs) * -1) 0 0;
   color: var(--chalk-dim);
   font-size: var(--text-sm);
+}
+
+.page-wip {
   font-style: italic;
 }
 
@@ -878,9 +957,18 @@ button.row-main:hover {
   --bubble: 24px;
 }
 
-.page-link:hover span {
+.page-link:hover .page-link-name {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* A maybe, and how many parts */
+.page-link-note {
+  margin-left: auto;
+  padding-left: var(--space-xs);
+  color: var(--chalk-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .page-notes p {
@@ -982,6 +1070,40 @@ textarea.draft-input {
   color: var(--chalk-dim);
   font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+/* A synonym: a chip with a cross that takes it off */
+.tag--remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag--remove svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.6;
+}
+
+.tag--remove:hover svg {
+  opacity: 1;
+}
+
+/* Recipe, composition and reactions start small, and grow once they're used. */
+textarea.draft-grow {
+  min-height: calc(1.4em * 2 + var(--space-xs));
+}
+
+textarea.draft-grow:focus,
+textarea.draft-grow.is-used {
+  min-height: calc(1.4em * 9 + var(--space-xs));
+}
+
+@supports (field-sizing: content) {
+  textarea.draft-grow {
+    max-height: 70vh;
+    field-sizing: content;
+  }
 }
 
 /* Work in progress: a tick box like the ones for picking ingredients */
@@ -1356,6 +1478,16 @@ textarea.draft-input {
   color: var(--marker-ink);
 }
 
+/* Maybe in the selected concrete: a dashed ring, and the name underlined */
+.card.is-maybe .bubble {
+  outline: 3px dashed var(--marker);
+  outline-offset: 2px;
+}
+
+.card.is-maybe .card-label {
+  box-shadow: inset 0 -3px 0 var(--marker);
+}
+
 .card:focus {
   outline: none;
 }
@@ -1515,6 +1647,275 @@ textarea.draft-input {
   font-variant-numeric: tabular-nums;
 }
 
+/* Paper or table: notched into the workspace's top-left corner */
+
+.views {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  border-right: 1px solid var(--ink-edge);
+  border-bottom: 1px solid var(--ink-edge);
+  background: var(--ink);
+  color: var(--chalk);
+  color-scheme: dark;
+}
+
+/* The table takes the paper's place. The paper keeps where it was scrolled to
+   underneath, and its own controls go while the table's showing. */
+
+:root:not([data-view="table"]) .table-view {
+  display: none;
+}
+
+:root[data-view="table"] .paper,
+:root[data-view="table"] .empty-hint {
+  visibility: hidden;
+}
+
+:root[data-view="table"] #clear-canvas,
+:root[data-view="table"] #zoom-out,
+:root[data-view="table"] #zoom-level,
+:root[data-view="table"] #zoom-in {
+  display: none;
+}
+
+/* The table: every concrete against every ingredient ---------------------- */
+
+.table-view {
+  --matrix-line: color-mix(in oklch, var(--card-ink) 13%, var(--paper));
+  --matrix-hover: color-mix(in oklch, var(--card-ink) 6%, var(--paper));
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(44px * 2 + var(--space-md));
+  background: var(--paper);
+  color: var(--card-ink);
+}
+
+.table-empty {
+  max-width: 36ch;
+  margin: calc(44px + var(--space-xl)) var(--space-lg) 0;
+  color: var(--paper-text);
+}
+
+.matrix {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+  line-height: 1.3;
+}
+
+.matrix th,
+.matrix td {
+  padding: 0;
+  font-weight: inherit;
+}
+
+/* The headings stay put while the table scrolls under them. */
+.matrix thead th,
+.matrix thead td {
+  position: sticky;
+  z-index: 2;
+  background: var(--paper);
+}
+
+.matrix-groups > * {
+  top: 0;
+  height: 34px;
+}
+
+.matrix-heads > th {
+  top: 34px;
+  vertical-align: bottom;
+  border-bottom: 1px solid var(--card-ink);
+}
+
+/* Room at its top for Paper and Table, and what the cells mean at its foot */
+.matrix thead .matrix-corner {
+  left: 0;
+  z-index: 3;
+  padding: calc(44px + var(--space-md)) var(--space-md) var(--space-sm);
+  border-right: 1px solid var(--card-ink);
+  border-bottom: 1px solid var(--card-ink);
+  vertical-align: bottom;
+}
+
+.matrix-key {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0;
+  color: var(--paper-text);
+}
+
+.matrix-key div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.matrix-key dd {
+  margin: 0;
+}
+
+.matrix-key .key {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--card-ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.matrix-key .key.is-yes,
+.matrix td.is-yes {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.matrix-key .key.is-maybe,
+.matrix td.is-maybe {
+  box-shadow: inset 0 0 0 2px var(--marker);
+}
+
+/* Ingredient groups, then the ingredients, their names running upward */
+.matrix-groups th {
+  padding: 0 var(--space-xs) var(--space-2xs);
+  border-left: 1px solid var(--matrix-line);
+  color: var(--paper-text);
+  font-weight: 600;
+  text-align: left;
+  vertical-align: bottom;
+}
+
+/* A long group name over a few columns is cut short rather than widening them. */
+.matrix-groups th span {
+  display: block;
+  width: 0;
+  min-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix-ingredient {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 40px;
+  padding: var(--space-xs) 0;
+  border: 0;
+  background: none;
+  font-weight: 600;
+}
+
+.matrix-ingredient .bubble,
+.matrix-concrete .bubble {
+  --bubble: 24px;
+}
+
+.matrix-heads .matrix-name {
+  max-height: 150px;
+  line-height: 1.15;
+  text-align: start;
+  transform: rotate(180deg);
+  writing-mode: vertical-rl;
+}
+
+.matrix-name.is-unfinished {
+  font-style: italic;
+}
+
+.matrix-heads th.is-open {
+  box-shadow: inset 0 -3px 0 var(--card-ink);
+}
+
+/* Concretes down the side, under their group names */
+.matrix tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid var(--card-ink);
+  border-bottom: 1px solid var(--matrix-line);
+  background: var(--paper);
+  text-align: left;
+}
+
+.matrix-concrete {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 210px;
+  min-height: 40px;
+  padding: var(--space-2xs) var(--space-sm) var(--space-2xs) var(--space-md);
+  border: 0;
+  background: none;
+  font-weight: 600;
+  text-align: left;
+}
+
+.matrix tbody .matrix-group th {
+  padding: var(--space-md) 0 var(--space-2xs);
+  border-right: 0;
+  color: var(--paper-text);
+}
+
+/* The group name stays in view while the row scrolls sideways. */
+.matrix-group th span {
+  position: sticky;
+  left: var(--space-md);
+}
+
+.matrix td {
+  min-width: 40px;
+  height: 40px;
+  border-right: 1px solid var(--matrix-line);
+  border-bottom: 1px solid var(--matrix-line);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+/* Filled with a dot when there's no number of parts, and a maybe gets a
+   question mark, after its parts if it has some. */
+.matrix td.is-yes:not(.has-parts)::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+
+.matrix td.is-maybe::after {
+  content: "?";
+}
+
+/* The row and column under the pointer, and the selected concrete */
+.matrix tbody tr:hover > :is(th, td:not(.is-yes)),
+.matrix .is-cross:not(.is-yes) {
+  background: var(--matrix-hover);
+}
+
+.matrix tbody tr.is-selected > th {
+  background: var(--marker);
+  color: var(--marker-ink);
+}
+
+.matrix-concrete:focus-visible,
+.matrix-ingredient:focus-visible {
+  outline: 2px solid var(--card-ink);
+  outline-offset: -2px;
+}
+
 /* When the paper is too narrow for the toolbar's full labels beside the zoom,
    the toolbar runs its whole width with short ones and the zoom sits on top. */
 
@@ -1650,6 +2051,11 @@ textarea.draft-input {
 
   .row-check {
     right: var(--space-sm);
+  }
+
+  .matrix-concrete {
+    width: 150px;
+    padding-left: var(--space-sm);
   }
 }
 

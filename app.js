@@ -55,6 +55,10 @@
     publishCount: $("#publish-count"),
     publishDraft: $("#publish-draft"),
     theme: $("#theme"),
+    views: $("#views"),
+    showPaper: $("#show-paper"),
+    showTable: $("#show-table"),
+    tableView: $("#table-view"),
     zoom: $("#zoom"),
     zoomOut: $("#zoom-out"),
     zoomLevel: $("#zoom-level"),
@@ -98,9 +102,11 @@
     selectedId: null,
     openIngredient: null, // one at a time, showing its description, tags, See more and Edit
     // The forms. `editing` is the id of the item being edited, or null for a new one.
-    // { editing, name, description, notes, tags: [], icon, group, unfinished, picked: Set of ingredient ids, error }
+    // Each holds its fields as typed, plus `addTyped`: what Save calls to take in
+    // anything typed into a chip box but not added yet. A concrete's also has
+    // `uses` (ingredient id → "yes" or "maybe") and `parts` (id → parts as typed).
     concreteDraft: null,
-    ingredientDraft: null, // { editing, name, description, notes, tags: [], icon, group, unfinished, error }
+    ingredientDraft: null,
     publishDraft: null, // { project, key, error }
     publishing: false,
     // The item each panel is showing as a page, from See more, and where its
@@ -124,10 +130,25 @@
   const singular = (kind) => kind.slice(0, -1); // "concretes" → "concrete", as rows and cards name it
   const findCard = (id) => doc.canvas.find((c) => c.id === id);
   const cardNode = (id) => $(`.card[data-id="${CSS.escape(id)}"]`, els.sheet);
+  // A concrete's `ingredients` are the ones that go in it and `maybe` the ones
+  // that might, both as ids, and `parts` says how much of each by id.
+  const maybeIdsOf = (concrete) => (Array.isArray(concrete?.maybe) ? concrete.maybe : []);
   const ingredientsOf = (concrete) => concrete.ingredients.map(findIngredient).filter(Boolean);
-  const pickedIds = (draft) => doc.ingredients.filter((i) => draft.picked.has(i.id)).map((i) => i.id);
+  const maybeOf = (concrete) => maybeIdsOf(concrete).map(findIngredient).filter(Boolean);
+  // "yes", "maybe", or null when the ingredient isn't in the concrete.
+  const useOf = (concrete, id) =>
+    concrete.ingredients.includes(id) ? "yes" : maybeIdsOf(concrete).includes(id) ? "maybe" : null;
+  const partsOf = (concrete, id) => {
+    const parts = concrete?.parts?.[id];
+    return typeof parts === "number" && parts > 0 ? parts : null;
+  };
+  const partsText = (parts) => `${parts} ${parts === 1 ? "part" : "parts"}`;
+  // The ingredients ticked in a concrete's form as "yes" or "maybe", in list order.
+  const usedIds = (draft, use) => doc.ingredients.filter((i) => draft.uses.get(i.id) === use).map((i) => i.id);
   const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
-  const tagsOf = (item) => (Array.isArray(item?.tags) ? item.tags.map(String) : []);
+  const listOf = (value) => (Array.isArray(value) ? value.map(String) : []);
+  const tagsOf = (item) => listOf(item?.tags);
+  const listFormat = new Intl.ListFormat("en-GB", { type: "conjunction" });
   const snap = (n) => Math.max(0, Math.round(n / GRID) * GRID);
   const scrollBehavior = () => (reducedMotion.matches ? "auto" : "smooth");
   const isEnabled = (button) => button.getAttribute("aria-disabled") !== "true";
@@ -372,8 +393,10 @@
     "//",
     "// This file can be edited by hand too, though publishing rewrites it and",
     "// drops any comments other than this one. Each concrete lists its",
-    "// ingredients by id, so every id in a concrete's `ingredients` has to match",
-    "// an ingredient below. The page warns in the browser console if one doesn't.",
+    "// ingredients by id: `ingredients` for the ones that go in it, and `maybe`",
+    "// (optional) for ones that might. `parts`, optional too, says how much of",
+    "// each, like { sand: 3, water: 1 }. Every id has to match an ingredient",
+    "// below, and the page warns in the browser console if one doesn't.",
     "//",
     "// `icon` is optional: a path to an image (for example \"icons/sand.png\") or an",
     "// image data URL. Without one, the item shows a plain circle.",
@@ -381,7 +404,9 @@
     "// listed together under that heading. Both lists show everything in the",
     "// order it's in here.",
     "// `notes` is optional as well: the longer write-up on the item's own page,",
-    "// which opens from See more.",
+    "// which opens from See more. So are `recipe`, `composition` (the chemical",
+    "// composition) and, for a concrete, `reactions`, which show there too.",
+    "// `synonyms` is optional too: a concrete's other names, like [\"Timbercrete\"].",
     "// `tags` is optional too: a list of words to search and filter by, like",
     "// [\"Structural\", \"Low carbon\"].",
     "// `unfinished: true` marks one as still a work in progress, which shows its",
@@ -574,9 +599,21 @@
       return sending.order[kind] ? inOrder(list, sending.order[kind]) : list;
     };
     const gone = new Set(sending.removed.ingredients);
-    const concretes = apply("concretes").map((c) =>
-      c.ingredients?.some((id) => gone.has(id)) ? { ...c, ingredients: c.ingredients.filter((id) => !gone.has(id)) } : c);
+    const concretes = apply("concretes").map((c) => withoutIngredients(c, gone));
     return { concretes, ingredients: apply("ingredients") };
+  }
+
+  // A concrete with these ingredients taken out of everything that names
+  // them: what goes in it, what might, and their parts.
+  function withoutIngredients(concrete, gone) {
+    const named = [...(concrete.ingredients ?? []), ...maybeIdsOf(concrete), ...Object.keys(concrete.parts ?? {})];
+    if (!named.some((id) => gone.has(id))) return concrete;
+    const next = { ...concrete, ingredients: (concrete.ingredients ?? []).filter((id) => !gone.has(id)) };
+    if (Array.isArray(concrete.maybe)) next.maybe = concrete.maybe.filter((id) => !gone.has(id));
+    if (concrete.parts) next.parts = Object.fromEntries(Object.entries(concrete.parts).filter(([id]) => !gone.has(id)));
+    if (next.maybe && !next.maybe.length) delete next.maybe;
+    if (next.parts && !Object.keys(next.parts).length) delete next.parts;
+    return next;
   }
 
   // A commit message such as "Add Sand; Edit C30 mix; Delete Lime; Reorder
@@ -779,6 +816,7 @@
       renderDrafts();
       renderPages();
       renderCanvas();
+      renderTable();
       renderToolbar();
       paint();
     });
@@ -864,14 +902,18 @@
   }
 
   function concreteRow(c) {
+    // How many ingredients, with any maybes after a plus: "5+2".
+    const yes = ingredientsOf(c).length;
+    const maybe = maybeOf(c).length;
+    const count = `${yes} ${yes === 1 ? "ingredient" : "ingredients"}${maybe ? ` and ${maybe} maybe` : ""}`;
     return h("li", { class: "row", draggable: "true", "data-kind": "concrete", "data-id": c.id },
       h("button", { type: "button", class: "row-main", "aria-pressed": "false", "data-focus-key": `concrete:${c.id}` },
         bubble(c),
         rowName(c),
         c.description ? h("span", { class: "row-desc" }, c.description) : null,
-        h("span", { class: "row-count" },
-          String(ingredientsOf(c).length),
-          h("span", { class: "sr-only" }, " ingredients"))),
+        h("span", { class: "row-count", title: count },
+          h("span", { "aria-hidden": "true" }, maybe ? `${yes}+${maybe}` : String(yes)),
+          h("span", { class: "sr-only" }, count))),
       placeButton("concrete", c),
       rowTags("concretes", c),
       rowTools("concrete", c));
@@ -890,10 +932,15 @@
   // While a concrete is being made or edited, ingredient rows are tick boxes.
   // Otherwise clicking one opens it, showing the start of its description,
   // See more and Edit.
+  //
+  // Picking, each click goes from not in it, to in it, to maybe, and back, and
+  // a box beside each one that's in takes how many parts. With a concrete
+  // selected, the row says whether it's a maybe and how many parts it takes.
   function ingredientRow(ingredient, picking) {
     const content = [
       bubble(ingredient),
       rowName(ingredient),
+      picking ? null : h("span", { class: "row-use" }),
       ingredient.description ? h("span", { class: "row-desc" }, ingredient.description) : null,
     ];
     const focusKey = `ingredient:${ingredient.id}`;
@@ -904,12 +951,29 @@
       : h("button", { type: "button", class: "row-main", "aria-expanded": "false", "data-focus-key": focusKey },
           content);
 
-    // One ingredient form at a time, so no Edit while one's open.
-    return h("li", { class: "row", draggable: "true", "data-kind": "ingredient", "data-id": ingredient.id },
+    // One ingredient form at a time, so no Edit while one's open. While
+    // picking, rows don't drag, so the parts boxes can be clicked into.
+    return h("li", { class: "row", draggable: picking ? null : "true", "data-kind": "ingredient", "data-id": ingredient.id },
       main,
-      placeButton("ingredient", ingredient),
+      picking ? partsBox(ingredient) : placeButton("ingredient", ingredient),
       picking ? null : rowTags("ingredients", ingredient),
       picking || ui.ingredientDraft ? null : rowTools("ingredient", ingredient));
+  }
+
+  function partsBox(ingredient) {
+    const input = h("input", {
+      class: "row-parts",
+      type: "text",
+      inputmode: "decimal",
+      autocomplete: "off",
+      maxlength: "8",
+      placeholder: "parts",
+      "aria-label": `Parts of ${ingredient.name}`,
+      "data-id": ingredient.id,
+      "data-focus-key": `parts:${ingredient.id}`,
+    });
+    input.value = ui.concreteDraft.parts.get(ingredient.id) ?? "";
+    return input;
   }
 
   function placeButton(kind, item) {
@@ -1054,10 +1118,13 @@
     els.publishCount.hidden = ui.publishing || !n;
   }
 
+  // Ingredients that go in are filled with the highlighter, and maybes are
+  // outlined with it, in the lists, on the paper and in the table alike.
   function paint() {
     const selected = ui.selectedId ? findConcrete(ui.selectedId) : null;
     const picking = ui.concreteDraft;
-    const inMix = new Set(selected?.ingredients);
+    // How each ingredient goes into the concrete being made, or the selected one.
+    const useIn = (id) => (picking ? picking.uses.get(id) ?? null : selected ? useOf(selected, id) : null);
 
     for (const row of $$(".row", els.concreteList)) {
       const on = row.dataset.id === ui.selectedId;
@@ -1067,27 +1134,40 @@
 
     for (const row of $$(".row", els.ingredientList)) {
       const id = row.dataset.id;
-      const on = picking ? picking.picked.has(id) : inMix.has(id);
+      const use = useIn(id);
       const open = !picking && ui.openIngredient === id;
       const main = $(".row-main", row);
-      row.classList.toggle("is-lit", on);
-      row.classList.toggle("is-dim", Boolean(selected) && !picking && !on);
+      row.classList.toggle("is-lit", use === "yes");
+      row.classList.toggle("is-maybe", use === "maybe");
+      row.classList.toggle("is-dim", Boolean(selected) && !picking && !use);
       row.classList.toggle("is-open", open);
-      if (picking) main.setAttribute("aria-pressed", String(on));
+      if (picking) main.setAttribute("aria-pressed", use === "yes" ? "true" : use === "maybe" ? "mixed" : "false");
       else if (main.hasAttribute("aria-expanded")) main.setAttribute("aria-expanded", String(open));
+      const note = $(".row-use", row);
+      if (note) {
+        const parts = selected && use ? partsOf(selected, id) : null;
+        const text = [use === "maybe" ? "Maybe" : "", parts ? partsText(parts) : ""].filter(Boolean).join(" · ");
+        if (note.textContent !== text) note.textContent = text;
+      }
     }
 
     for (const card of els.cards.children) {
       const concrete = card.dataset.kind === "concrete";
-      const lit = concrete ? card.dataset.ref === ui.selectedId : inMix.has(card.dataset.ref);
-      card.classList.toggle("is-lit", lit);
+      const use = concrete ? null : useIn(card.dataset.ref);
+      card.classList.toggle("is-lit", concrete ? card.dataset.ref === ui.selectedId : use === "yes");
+      card.classList.toggle("is-maybe", use === "maybe");
       card.classList.toggle("is-open", !concrete && !picking && card.dataset.ref === ui.openIngredient);
     }
 
+    paintTable();
+
     const draft = ui.concreteDraft;
     setHint(els.concreteDraft, draft, () => {
-      const n = pickedIds(draft).length;
-      return n ? `${n} ${n === 1 ? "ingredient" : "ingredients"} picked.` : "Now click its ingredients on the right.";
+      const yes = usedIds(draft, "yes").length;
+      const maybe = usedIds(draft, "maybe").length;
+      if (!yes && !maybe) return "Click its ingredients on the right. Click one again to make it a maybe.";
+      const counts = listFormat.format([yes ? `${yes} in it` : "", maybe ? `${maybe} maybe` : ""].filter(Boolean));
+      return `${counts[0].toUpperCase()}${counts.slice(1)}. Type how many parts of each in the box beside it, if you know.`;
     });
     setHint(els.ingredientDraft, ui.ingredientDraft, () => {
       if (!draft || ui.ingredientDraft.editing) return "";
@@ -1122,7 +1202,7 @@
     paint();
     if (!id) return;
     revealRows([$(".row.is-selected", els.concreteList)]);
-    revealRows($$(".row.is-lit", els.ingredientList));
+    revealRows($$(".row.is-lit, .row.is-maybe", els.ingredientList));
   }
 
   // Opening an ingredient closes whichever was open before.
@@ -1187,8 +1267,11 @@
     if ([...tags].some((tag) => !own.has(tag))) return false;
     const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return true;
-    const mix = kind === "concretes" ? ingredientsOf(item).map((i) => i.name) : [];
-    const searched = [item.name, item.description, item.notes, item.group, ...tagsOf(item), ...mix].join(" ").toLowerCase();
+    const mix = kind === "concretes" ? [...ingredientsOf(item), ...maybeOf(item)].map((i) => i.name) : [];
+    const searched = [
+      item.name, ...listOf(item.synonyms), item.description, item.notes, item.recipe, item.composition,
+      item.reactions, item.group, ...tagsOf(item), ...mix,
+    ].join(" ").toLowerCase();
     return words.every((word) => searched.includes(word));
   }
 
@@ -1258,6 +1341,7 @@
     keepingFocus(() => {
       renderFilters();
       renderLists();
+      renderTable();
       paint();
     });
   }
@@ -1483,8 +1567,11 @@
 
   function pageFor(kind, item) {
     const concrete = kind === "concretes";
-    const related = concrete ? ingredientsOf(item) : doc.concretes.filter((c) => c.ingredients.includes(item.id));
-    const notes = item.notes?.trim();
+    // What it's made of or used in, each with whether it's a maybe and its parts.
+    const related = concrete
+      ? [...ingredientsOf(item), ...maybeOf(item)].map((other) => ({ other, mix: item }))
+      : doc.concretes.filter((c) => useOf(c, item.id)).map((other) => ({ other, mix: other }));
+    const synonyms = concrete ? listOf(item.synonyms) : [];
     const tags = tagsOf(item);
     return h("article", { class: "page", "aria-labelledby": `${kind}-page-title` },
       h("button", { type: "button", class: "page-back", "data-focus-key": `back:${kind}` },
@@ -1494,6 +1581,7 @@
         bubble(item),
         h("h3", { class: item.unfinished ? "page-title is-unfinished" : "page-title", id: `${kind}-page-title` },
           item.name),
+        synonyms.length ? h("p", { class: "page-also" }, `Also called ${listFormat.format(synonyms)}`) : null,
         item.unfinished ? h("p", { class: "page-wip" }, "Work in progress") : null),
       item.description ? h("p", { class: "page-desc" }, item.description) : null,
       tags.length
@@ -1505,8 +1593,12 @@
         ? h("section", { class: "page-section" },
             h("h4", { class: "page-label" }, concrete ? "Ingredients" : "Used in"),
             h("ul", { class: "page-links" },
-              related.map((other) =>
-                h("li", null,
+              related.map(({ other, mix }) => {
+                const ingredientId = concrete ? other.id : item.id;
+                const parts = partsOf(mix, ingredientId);
+                const note = [useOf(mix, ingredientId) === "maybe" ? "maybe" : "", parts ? partsText(parts) : ""]
+                  .filter(Boolean).join(" · ");
+                return h("li", null,
                   h("button", {
                       type: "button",
                       class: "page-link",
@@ -1515,14 +1607,27 @@
                       "data-focus-key": `link:${kind}:${other.id}`,
                     },
                     bubble(other),
-                    h("span", null, other.name))))))
+                    h("span", { class: "page-link-name" }, other.name),
+                    note ? h("span", { class: "page-link-note" }, note) : null));
+              })))
         : null,
-      h("section", { class: "page-section" },
-        h("h4", { class: "page-label" }, "Notes"),
-        notes
-          ? h("div", { class: "page-notes" }, notes.split(/\n\s*\n/).map((paragraph) => h("p", null, paragraph)))
-          : h("p", { class: "page-empty" }, "No notes yet.")),
+      concrete ? pageText("Recipe", item.recipe) : null,
+      pageText("Chemical composition", item.composition),
+      concrete ? pageText("Reactions", item.reactions) : null,
+      pageText("Notes", item.notes, "No notes yet."),
       h("div", { class: "page-actions" }, editButton(singular(kind), item)));
+  }
+
+  // A section of free text, its paragraphs split at blank lines. Left out when
+  // there's nothing to show, unless it says what's missing instead.
+  function pageText(label, text, empty = "") {
+    const value = typeof text === "string" ? text.trim() : "";
+    if (!value && !empty) return null;
+    return h("section", { class: "page-section" },
+      h("h4", { class: "page-label" }, label),
+      value
+        ? h("div", { class: "page-notes" }, value.split(/\n\s*\n/).map((paragraph) => h("p", null, paragraph)))
+        : h("p", { class: "page-empty" }, empty));
   }
 
   // ---------------------------------------------------------------------------
@@ -1537,13 +1642,22 @@
       ui.concreteDraft = {
         editing: concrete?.id ?? null,
         name: concrete?.name ?? "",
+        synonyms: listOf(concrete?.synonyms),
         description: concrete?.description ?? "",
         notes: concrete?.notes ?? "",
+        recipe: concrete?.recipe ?? "",
+        composition: concrete?.composition ?? "",
+        reactions: concrete?.reactions ?? "",
         tags: tagsOf(concrete),
         icon: concrete?.icon ?? "",
         group: concrete?.group ?? "",
         unfinished: Boolean(concrete?.unfinished),
-        picked: new Set(concrete?.ingredients),
+        uses: new Map([
+          ...(concrete?.ingredients ?? []).map((ingredient) => [ingredient, "yes"]),
+          ...maybeIdsOf(concrete).map((ingredient) => [ingredient, "maybe"]),
+        ]),
+        parts: new Map(Object.entries(concrete?.parts ?? {}).map(([ingredient, parts]) => [ingredient, String(parts)])),
+        addTyped: [],
         error: "",
       };
       ui.selectedId = null;
@@ -1564,39 +1678,54 @@
     (id ? $(`[data-focus-key="edit:concrete:${CSS.escape(id)}"]`) : els.addConcrete)?.focus();
   }
 
-  function togglePick(id) {
+  // Each click on an ingredient while making a concrete goes from not in it,
+  // to in it, to maybe, and back.
+  function cyclePick(id) {
     const draft = ui.concreteDraft;
-    if (draft.picked.has(id)) draft.picked.delete(id);
-    else draft.picked.add(id);
+    const use = draft.uses.get(id);
+    if (!use) draft.uses.set(id, "yes");
+    else if (use === "yes") draft.uses.set(id, "maybe");
+    else draft.uses.delete(id);
     draft.error = "";
     paint();
   }
 
   async function saveConcreteDraft() {
     const draft = ui.concreteDraft;
-    draft.addTypedTag?.();
+    for (const add of draft.addTyped) add();
     if (!(await iconReady(draft)) || ui.concreteDraft !== draft) return;
     const name = draft.name.trim();
-    const ingredients = pickedIds(draft);
+    const ingredients = usedIds(draft, "yes");
+    const maybe = usedIds(draft, "maybe");
+    const parts = partsFrom(draft, [...ingredients, ...maybe]);
     const nameError = !name
       ? "Give it a name first."
       : doc.concretes.some((c) => c.id !== draft.editing && sameName(c.name, name))
         ? `There's already a concrete called ${name}.`
         : "";
-    draft.error = nameError || (ingredients.length ? "" : "Pick at least one ingredient on the right.");
+    draft.error = nameError
+      || (ingredients.length || maybe.length ? "" : "Pick at least one ingredient on the right.")
+      || parts.error;
     if (draft.error) {
       paint();
       if (nameError) $("#concrete-name").focus();
+      else if (parts.bad) $(`.row-parts[data-id="${CSS.escape(parts.bad)}"]`)?.focus();
       return;
     }
 
     const id = draft.editing ?? uniqueId(name, doc.concretes);
     const item = withFields(draft.editing ? findConcrete(id) : { id }, {
       name,
+      synonyms: cleanNames(draft.synonyms),
       description: draft.description.trim(),
       icon: draft.icon,
       group: cleanGroup(draft.group, "concretes", draft.editing),
       ingredients,
+      maybe,
+      parts: parts.values,
+      recipe: draft.recipe.trim(),
+      composition: draft.composition.trim(),
+      reactions: draft.reactions.trim(),
       notes: draft.notes.trim(),
       tags: cleanTags(draft.tags, "concretes", draft.editing),
       unfinished: draft.unfinished,
@@ -1618,19 +1747,56 @@
     const next = draft.editing || ui.page.concretes ? $(`[data-focus-key="edit:concrete:${CSS.escape(id)}"]`) : $(".row-main", row);
     next?.focus({ preventScroll: true });
     revealRows([row]);
-    revealRows($$(".row.is-lit", els.ingredientList));
+    revealRows($$(".row.is-lit, .row.is-maybe", els.ingredientList));
   }
 
   // An item with a form's fields, leaving out empty ones it never had, so that
   // saving without a change doesn't count as one. Work in progress is only
-  // written down while it's ticked.
+  // written down while it's ticked, and a concrete always has `ingredients`,
+  // even when it's all maybes.
   function withFields(item, fields) {
     const next = { ...item, ...fields };
     for (const [key, value] of Object.entries(fields)) {
-      const empty = value === "" || value === false || (Array.isArray(value) && !value.length);
-      if (empty && (key === "unfinished" || !Object.hasOwn(item, key))) delete next[key];
+      const empty = value === "" || value === false
+        || (Array.isArray(value) ? !value.length : typeof value === "object" && !Object.keys(value).length);
+      if (empty && key !== "ingredients" && (key === "unfinished" || !Object.hasOwn(item, key))) delete next[key];
     }
     return next;
+  }
+
+  // The parts typed beside each of these ingredients, as numbers by id. `bad`
+  // is the first one that isn't a number, with `error` saying so.
+  function partsFrom(draft, ids) {
+    const values = {};
+    for (const id of ids) {
+      const text = draft.parts.get(id)?.trim();
+      if (!text) continue;
+      const parts = parseParts(text);
+      if (parts === null) {
+        const name = findIngredient(id)?.name ?? id;
+        return { values, bad: id, error: `The parts for ${name} need to be a number, like 2 or 0.5.` };
+      }
+      values[id] = parts;
+    }
+    return { values, bad: null, error: "" };
+  }
+
+  // "2", "0.5", "0,5" or "1/2", as a number more than 0, or null.
+  function parseParts(text) {
+    const match = text.replace(/,/g, ".").match(/^(\d*\.?\d+)(?:\s*\/\s*(\d*\.?\d+))?$/);
+    if (!match) return null;
+    const parts = match[2] ? Number(match[1]) / Number(match[2]) : Number(match[1]);
+    return Number.isFinite(parts) && parts > 0 ? Math.round(parts * 1000) / 1000 : null;
+  }
+
+  // Names without repeats or stray spaces.
+  function cleanNames(list) {
+    const names = new Map();
+    for (const text of list) {
+      const name = text.trim().replace(/\s+/g, " ");
+      if (name && !names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+    }
+    return [...names.values()];
   }
 
   // Tags without repeats, in the spelling already in use for any that are on
@@ -1673,10 +1839,12 @@
         name: ingredient?.name ?? "",
         description: ingredient?.description ?? "",
         notes: ingredient?.notes ?? "",
+        composition: ingredient?.composition ?? "",
         tags: tagsOf(ingredient),
         icon: ingredient?.icon ?? "",
         group: ingredient?.group ?? "",
         unfinished: Boolean(ingredient?.unfinished),
+        addTyped: [],
         error: "",
       };
       showPanel("ingredients");
@@ -1695,7 +1863,7 @@
 
   async function saveIngredientDraft() {
     const draft = ui.ingredientDraft;
-    draft.addTypedTag?.();
+    for (const add of draft.addTyped) add();
     if (!(await iconReady(draft)) || ui.ingredientDraft !== draft) return;
     const name = draft.name.trim();
     draft.error = !name
@@ -1715,6 +1883,7 @@
       description: draft.description.trim(),
       icon: draft.icon,
       group: cleanGroup(draft.group, "ingredients", draft.editing),
+      composition: draft.composition.trim(),
       notes: draft.notes.trim(),
       tags: cleanTags(draft.tags, "ingredients", draft.editing),
       unfinished: draft.unfinished,
@@ -1730,7 +1899,7 @@
         d.ingredients = withEdited(d.ingredients, item);
       });
     } else {
-      ui.concreteDraft?.picked.add(id);
+      ui.concreteDraft?.uses.set(id, "yes");
       commit((d) => d.ingredients.push(item));
     }
 
@@ -1747,13 +1916,12 @@
   // Concretes that used it lose it too, and Undo puts it all back.
   function deleteIngredient(id) {
     const ingredient = findIngredient(id);
-    const users = doc.concretes.filter((c) => c.ingredients.includes(id)).length;
+    const users = doc.concretes.filter((c) => useOf(c, id)).length;
     ui.ingredientDraft = null;
     if (ui.openIngredient === id) ui.openIngredient = null;
     commit((d) => {
       d.ingredients = d.ingredients.filter((i) => i.id !== id);
-      d.concretes = d.concretes.map((c) =>
-        c.ingredients.includes(id) ? { ...c, ingredients: c.ingredients.filter((x) => x !== id) } : c);
+      d.concretes = d.concretes.map((c) => withoutIngredients(c, new Set([id])));
       d.canvas = d.canvas.filter((card) => !(card.kind === "ingredient" && card.ref === id));
     });
     els.addIngredient.focus();
@@ -1766,8 +1934,13 @@
       title: draft.editing ? "Edit concrete" : "New concrete",
       fields: [
         field("Name", textField("concrete-name", draft, "name")),
+        synonymsField("concrete-synonyms", draft),
         field("Description", textField("concrete-description", draft, "description", true)),
         field("Notes", notesField("concrete-notes", draft)),
+        field("Recipe (optional)", growingField("concrete-recipe", draft, "recipe", "How it's mixed, step by step")),
+        field("Chemical composition (optional)",
+          growingField("concrete-composition", draft, "composition", "Like CaO 64%, SiO₂ 21%")),
+        field("Reactions (optional)", growingField("concrete-reactions", draft, "reactions", "Like CaO + H₂O → Ca(OH)₂")),
         tagsField("concrete-tags", draft, "concretes"),
         iconField("concrete-icon", draft),
         groupField("concrete-group", draft, "concretes"),
@@ -1786,6 +1959,8 @@
         field("Name", textField("ingredient-name", draft, "name")),
         field("Description", textField("ingredient-description", draft, "description", true)),
         field("Notes", notesField("ingredient-notes", draft)),
+        field("Chemical composition (optional)",
+          growingField("ingredient-composition", draft, "composition", "Like SiO₂ 99%")),
         tagsField("ingredient-tags", draft, "ingredients"),
         iconField("ingredient-icon", draft),
         groupField("ingredient-group", draft, "ingredients"),
@@ -1839,10 +2014,6 @@
         },
       },
       tag);
-    // Room for what's typed, so the box grows rather than scrolling.
-    const fit = () => {
-      input.size = Math.max(8, input.value.length + 1);
-    };
     // A tag that's there already is turned on rather than added twice.
     const add = (text) => {
       const tag = text.trim().replace(/\s+/g, " ");
@@ -1852,18 +2023,74 @@
       if (!has(tag)) draft.tags = [...draft.tags, existing?.textContent ?? tag];
       showPressed();
     };
+
+    row.append(...[...offers.values()].sort((a, b) => a.localeCompare(b)).map(chip), input);
+    draft.addTyped.push(chipEntry(input, add));
+    showPressed();
+    return h("div", { class: "draft-field", role: "group", "aria-labelledby": `${id}-label` },
+      h("span", { class: "draft-label", id: `${id}-label` }, "Tags (optional)"),
+      row,
+      h("p", { class: "draft-note", id: `${id}-note` }, "Click a tag to add or remove it. Type a new one and press Enter."));
+  }
+
+  // Other names a concrete goes by, which search finds too. Each is a chip
+  // with a cross that takes it off again.
+  function synonymsField(id, draft) {
+    const row = h("div", { class: "tag-row tag-picker" });
+    const input = h("input", {
+      class: "tag-new",
+      id,
+      type: "text",
+      maxlength: "80",
+      autocomplete: "off",
+      placeholder: "Add a name",
+      "aria-label": "Add a synonym",
+    });
+    const chip = (name) => h("button", {
+        type: "button",
+        class: "tag tag--remove",
+        "aria-label": `Remove ${name}`,
+        title: "Remove",
+        onclick: (event) => {
+          draft.synonyms = draft.synonyms.filter((other) => other !== name);
+          event.currentTarget.remove();
+          input.focus();
+        },
+      },
+      name,
+      icon("cross"));
+    const add = (text) => {
+      const name = text.trim().replace(/\s+/g, " ");
+      if (!name || draft.synonyms.some((other) => sameName(other, name))) return;
+      draft.synonyms = [...draft.synonyms, name];
+      input.before(chip(name));
+    };
+    row.append(...draft.synonyms.map(chip), input);
+    draft.addTyped.push(chipEntry(input, add));
+    return h("div", { class: "draft-field", role: "group", "aria-labelledby": `${id}-label` },
+      h("span", { class: "draft-label", id: `${id}-label` }, "Synonyms (optional)"),
+      row);
+  }
+
+  // Sets up a box that adds what's typed into it: Enter or a comma adds it, and
+  // so does moving on to something else. Pasted text with commas adds each
+  // part, and Escape clears the box rather than closing the form. Hands back
+  // what adds anything still in the box, for Save.
+  function chipEntry(input, add) {
+    // Room for what's typed, so the box grows rather than scrolling.
+    const fit = () => {
+      input.size = Math.max(input.placeholder.length + 1, input.value.length + 1);
+    };
     const addTyped = () => {
       add(input.value);
       input.value = "";
       fit();
     };
-
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === ",") {
         event.preventDefault();
         addTyped();
       } else if (event.key === "Escape" && input.value) {
-        // Clears the box rather than closing the form.
         event.preventDefault();
         event.stopPropagation();
         input.value = "";
@@ -1871,7 +2098,6 @@
       }
     });
     input.addEventListener("input", () => {
-      // Pasted text with commas in it makes a tag of each part.
       const parts = input.value.split(",");
       if (parts.length > 1) {
         input.value = parts.pop();
@@ -1880,16 +2106,21 @@
       fit();
     });
     input.addEventListener("blur", addTyped);
-    // Save picks up anything typed but not added yet.
-    draft.addTypedTag = addTyped;
-
-    row.append(...[...offers.values()].sort((a, b) => a.localeCompare(b)).map(chip), input);
-    showPressed();
     fit();
-    return h("div", { class: "draft-field", role: "group", "aria-labelledby": `${id}-label` },
-      h("span", { class: "draft-label", id: `${id}-label` }, "Tags (optional)"),
-      row,
-      h("p", { class: "draft-note", id: `${id}-note` }, "Click a tag to add or remove it. Type a new one and press Enter."));
+    return addTyped;
+  }
+
+  // Starts small, and grows to give room once it's used.
+  function growingField(id, draft, key, placeholder) {
+    const control = textField(id, draft, key, true);
+    control.rows = 2;
+    control.maxLength = 20000;
+    control.placeholder = placeholder;
+    control.classList.add("draft-grow");
+    const used = () => control.classList.toggle("is-used", control.value.trim() !== "");
+    control.addEventListener("input", used);
+    used();
+    return control;
   }
 
   // The names of the list's other groups are offered while typing.
@@ -2063,6 +2294,7 @@
   // Canvas
 
   function place(kind, ref, at) {
+    showView("paper");
     const id = `card-${++cardCount}`;
     const { x, y } = at ?? freeSpot(kind);
     commit((d) => d.canvas.push({ id, kind, ref, x, y }));
@@ -2093,7 +2325,7 @@
         const node = cardNode(item.id);
         return { x: item.x, y: item.y, w: node?.offsetWidth ?? 0, h: node?.offsetHeight ?? 0 };
       }),
-      ...[els.toolbar, els.publish, els.zoom].filter((node) => !node.hidden).map(onPaper),
+      ...[els.toolbar, els.publish, els.zoom, els.views].filter((node) => !node.hidden).map(onPaper),
     ];
     const fits = (x, y) =>
       taken.every((r) =>
@@ -2346,11 +2578,132 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Table
+  //
+  // Every concrete against every ingredient, in the lists' own order and
+  // groups, narrowed by their searches and tags. A cell is filled where the
+  // ingredient goes in and outlined where it might, with its parts if known.
+
+  function renderTable() {
+    if (view.mode !== "table") return;
+    crossColumn = null;
+    const shown = (kind) => groupsIn(doc[kind])
+      .map((group) => ({ ...group, items: group.items.filter((item) => matchesFilter(kind, item)) }))
+      .filter((group) => group.items.length);
+    const rowGroups = shown("concretes");
+    const columnGroups = shown("ingredients");
+    const columns = columnGroups.flatMap((group) => group.items);
+    if (!rowGroups.length || !columns.length) {
+      els.tableView.replaceChildren(h("p", { class: "table-empty" },
+        doc.concretes.length && doc.ingredients.length
+          ? "Nothing matches the searches and tags above the lists."
+          : "Add some concretes and ingredients to see them here."));
+      return;
+    }
+    const nameOf = (item) =>
+      h("span", { class: item.unfinished ? "matrix-name is-unfinished" : "matrix-name" }, item.name);
+    const head = h("thead", null,
+      h("tr", { class: "matrix-groups" },
+        h("td", { class: "matrix-corner", rowspan: "2" }, tableKey()),
+        columnGroups.map((group) =>
+          h("th", { scope: "colgroup", colspan: String(group.items.length), title: group.name || null },
+            h("span", null, group.name)))),
+      h("tr", { class: "matrix-heads" },
+        columns.map((ingredient) =>
+          h("th", { scope: "col", "data-id": ingredient.id },
+            h("button", {
+                type: "button",
+                class: "matrix-ingredient",
+                title: ingredient.name,
+                "data-focus-key": `column:${ingredient.id}`,
+              },
+              bubble(ingredient),
+              nameOf(ingredient))))));
+    const body = h("tbody", null,
+      rowGroups.map((group) => [
+        group.name
+          ? h("tr", { class: "matrix-group" },
+              h("th", { scope: "rowgroup", colspan: String(columns.length + 1) }, h("span", null, group.name)))
+          : null,
+        group.items.map((concrete) =>
+          h("tr", { "data-id": concrete.id },
+            h("th", { scope: "row" },
+              h("button", { type: "button", class: "matrix-concrete", "data-focus-key": `row:${concrete.id}` },
+                bubble(concrete),
+                nameOf(concrete))),
+            columns.map((ingredient) => tableCell(concrete, ingredient)))),
+      ]));
+    els.tableView.replaceChildren(
+      h("table", { class: "matrix" },
+        h("caption", { class: "sr-only" }, "Which concretes have which ingredients"),
+        head,
+        body));
+    paintTable();
+  }
+
+  function tableCell(concrete, ingredient) {
+    const use = useOf(concrete, ingredient.id);
+    if (!use) return h("td", { "data-col": ingredient.id });
+    const parts = partsOf(concrete, ingredient.id);
+    const says = [use === "maybe" ? "maybe" : "in it", parts ? partsText(parts) : ""].filter(Boolean).join(", ");
+    return h("td", {
+        class: parts ? `is-${use} has-parts` : `is-${use}`,
+        "data-col": ingredient.id,
+        title: `${concrete.name}: ${ingredient.name}, ${says}`,
+      },
+      parts ? String(parts) : null,
+      h("span", { class: "sr-only" }, says));
+  }
+
+  // What the cells mean, in the corner above the concretes.
+  function tableKey() {
+    const entry = (key, meaning) => h("div", null, h("dt", null, key), h("dd", null, meaning));
+    return h("dl", { class: "matrix-key" },
+      entry(h("span", { class: "key is-yes", "aria-hidden": "true" }), "In it"),
+      entry(h("span", { class: "key is-maybe", "aria-hidden": "true" }), "Maybe"),
+      entry(h("span", { class: "key", "aria-hidden": "true" }, "2"), "Parts"));
+  }
+
+  // The selected concrete's row and the open ingredient's column stand out.
+  function paintTable() {
+    if (view.mode !== "table") return;
+    for (const row of $$("tbody tr[data-id]", els.tableView)) {
+      row.classList.toggle("is-selected", row.dataset.id === ui.selectedId);
+    }
+    for (const head of $$(".matrix-heads th", els.tableView)) {
+      head.classList.toggle("is-open", head.dataset.id === ui.openIngredient);
+    }
+  }
+
+  // Pointing at a cell lights up its ingredient's column along with its row.
+  let crossColumn = null;
+
+  function crossTo(id) {
+    if (id === crossColumn) return;
+    for (const node of $$(".is-cross", els.tableView)) node.classList.remove("is-cross");
+    crossColumn = id;
+    if (!id) return;
+    const column = CSS.escape(id);
+    for (const node of $$(`td[data-col="${column}"], .matrix-heads th[data-id="${column}"]`, els.tableView)) {
+      node.classList.add("is-cross");
+    }
+  }
+
+  // Paper or table, in the workspace.
+  function showView(mode) {
+    if (view.mode === mode) return;
+    view.mode = mode;
+    applyView();
+    writeView();
+    renderTable();
+  }
+
+  // ---------------------------------------------------------------------------
   // View
   //
-  // Which lists are hidden, and dark or light paper. These belong to the
-  // browser rather than the data, so undo leaves them alone. A script at the
-  // top of index.html puts them back before the page first draws.
+  // Paper or table, which lists are hidden, and dark or light paper. These
+  // belong to the browser rather than the data, so undo leaves them alone. A
+  // script at the top of index.html puts them back before the page first draws.
 
   const darkScheme = matchMedia("(prefers-color-scheme: dark)");
   const view = readView();
@@ -2359,11 +2712,12 @@
     try {
       const saved = JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY));
       return {
+        mode: saved?.mode === "table" ? "table" : "paper",
         theme: saved?.theme === "dark" || saved?.theme === "light" ? saved.theme : null,
         hide: Array.isArray(saved?.hide) ? KINDS.filter((kind) => saved.hide.includes(kind)) : [],
       };
     } catch {
-      return { theme: null, hide: [] };
+      return { mode: "paper", theme: null, hide: [] };
     }
   }
 
@@ -2381,6 +2735,10 @@
 
   function applyView() {
     const root = document.documentElement;
+    if (view.mode === "table") root.dataset.view = "table";
+    else delete root.dataset.view;
+    els.showPaper.setAttribute("aria-pressed", String(view.mode !== "table"));
+    els.showTable.setAttribute("aria-pressed", String(view.mode === "table"));
     if (view.theme) root.dataset.theme = view.theme;
     else delete root.dataset.theme;
     if (view.hide.length) root.dataset.hide = view.hide.join(" ");
@@ -2436,7 +2794,7 @@
     else if (event.target.closest(".row-more")) openPage("ingredients", row.dataset.id);
     else if (event.target.closest(".row-edit")) openIngredientDraft(row.dataset.id);
     else if (!event.target.closest("button.row-main")) return;
-    else if (ui.concreteDraft) togglePick(row.dataset.id);
+    else if (ui.concreteDraft) cyclePick(row.dataset.id);
     else toggleOpen(row.dataset.id);
   });
 
@@ -2498,6 +2856,15 @@
     });
     list.addEventListener("input", (event) => {
       if (event.target.matches(".group-input") && ui.renaming) ui.renaming.text = event.target.value;
+      // The parts beside an ingredient being picked for a concrete.
+      const draft = ui.concreteDraft;
+      if (event.target.matches(".row-parts") && draft) {
+        draft.parts.set(event.target.dataset.id, event.target.value);
+        if (draft.error) {
+          draft.error = "";
+          paint();
+        }
+      }
     });
     list.addEventListener("keydown", (event) => {
       if (event.target.matches(".group-input")) {
@@ -2593,7 +2960,7 @@
 
   // A trackpad pinch arrives as a wheel event with ctrlKey set, in all but Safari.
   els.workspace.addEventListener("wheel", (event) => {
-    if (!event.ctrlKey && !event.metaKey) return;
+    if ((!event.ctrlKey && !event.metaKey) || view.mode === "table") return;
     event.preventDefault();
     const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1);
     const step = Math.max(-25, Math.min(25, delta));
@@ -2603,10 +2970,12 @@
   // Safari's own events for that. On a touch screen the pointers above have it covered.
   let gestureStartZoom = 1;
   els.workspace.addEventListener("gesturestart", (event) => {
+    if (view.mode === "table") return;
     event.preventDefault();
     gestureStartZoom = ui.zoom;
   });
   els.workspace.addEventListener("gesturechange", (event) => {
+    if (view.mode === "table") return;
     event.preventDefault();
     if (!pressed.size) setZoom(gestureStartZoom * event.scale, { x: event.clientX, y: event.clientY });
   });
@@ -2630,6 +2999,22 @@
   for (const kind of KINDS) {
     panels[kind].toggle.addEventListener("click", () => setPanelHidden(kind, !view.hide.includes(kind)));
   }
+  els.showPaper.addEventListener("click", () => showView("paper"));
+  els.showTable.addEventListener("click", () => showView("table"));
+
+  // A concrete's name or cell in the table selects it, and an ingredient's
+  // heading opens it, just as clicking them in their lists does.
+  els.tableView.addEventListener("click", (event) => {
+    const ingredient = event.target.closest(".matrix-ingredient")?.closest("th").dataset.id;
+    const concrete = event.target.closest(".matrix-concrete, td")?.closest("tr").dataset.id;
+    if (ingredient) openIngredient(ui.openIngredient === ingredient ? null : ingredient);
+    else if (concrete) select(ui.selectedId === concrete ? null : concrete);
+  });
+  els.tableView.addEventListener("pointerover", (event) => {
+    const cell = event.target.closest("td[data-col], .matrix-heads th");
+    crossTo(cell ? cell.dataset.col ?? cell.dataset.id : null);
+  });
+  els.tableView.addEventListener("pointerleave", () => crossTo(null));
   els.theme.addEventListener("click", () => {
     view.theme = isDark() ? "light" : "dark";
     applyView();
@@ -2731,7 +3116,7 @@
   function checkSeed() {
     const ingredientIds = new Set(seed.ingredients.map((i) => i.id));
     for (const c of seed.concretes) {
-      for (const id of c.ingredients ?? []) {
+      for (const id of new Set([...(c.ingredients ?? []), ...maybeIdsOf(c), ...Object.keys(c.parts ?? {})])) {
         if (!ingredientIds.has(id)) console.warn(`data.js: ${c.name} lists "${id}", which isn't in ingredients.`);
       }
     }

@@ -14,10 +14,12 @@
   <link rel="stylesheet" href="styles.css">
 
   <script>
-    // Dark or light paper and hidden lists, as this browser last had them, set
-    // before anything is drawn so the page doesn't flash the other way first.
+    // Paper or table, dark or light paper and hidden lists, as this browser last
+    // had them, set before anything is drawn so the page doesn't flash the
+    // other way first.
     try {
       const view = JSON.parse(localStorage.getItem("concrete-view"));
+      if (view?.mode === "table") document.documentElement.dataset.view = "table";
       if (view?.theme === "dark" || view?.theme === "light") document.documentElement.dataset.theme = view.theme;
       if (Array.isArray(view?.hide) && view.hide.length) document.documentElement.dataset.hide = view.hide.join(" ");
     } catch {
@@ -59,6 +61,13 @@
         <div class="sheet" id="sheet">
           <div class="cards" id="cards"></div>
         </div>
+      </div>
+
+      <div class="table-view" id="table-view"></div>
+
+      <div class="views" id="views" role="group" aria-label="Show">
+        <button type="button" class="tool" id="show-paper" aria-pressed="true">Paper</button>
+        <button type="button" class="tool" id="show-table" aria-pressed="false">Table</button>
       </div>
 
       <p class="empty-hint" id="empty-hint">

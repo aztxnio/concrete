@@ -5,8 +5,10 @@
 //
 // This file can be edited by hand too, though publishing rewrites it and
 // drops any comments other than this one. Each concrete lists its
-// ingredients by id, so every id in a concrete's `ingredients` has to match
-// an ingredient below. The page warns in the browser console if one doesn't.
+// ingredients by id: `ingredients` for the ones that go in it, and `maybe`
+// (optional) for ones that might. `parts`, optional too, says how much of
+// each, like { sand: 3, water: 1 }. Every id has to match an ingredient
+// below, and the page warns in the browser console if one doesn't.
 //
 // `icon` is optional: a path to an image (for example "icons/sand.png") or an
 // image data URL. Without one, the item shows a plain circle.
@@ -14,7 +16,9 @@
 // listed together under that heading. Both lists show everything in the
 // order it's in here.
 // `notes` is optional as well: the longer write-up on the item's own page,
-// which opens from See more.
+// which opens from See more. So are `recipe`, `composition` (the chemical
+// composition) and, for a concrete, `reactions`, which show there too.
+// `synonyms` is optional too: a concrete's other names, like ["Timbercrete"].
 // `tags` is optional too: a list of words to search and filter by, like
 // ["Structural", "Low carbon"].
 // `unfinished: true` marks one as still a work in progress, which shows its

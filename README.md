@@ -19,6 +19,13 @@ hand. To change it:
 
    Tick **Still a work in progress** in its form while it isn't finished. Its
    name then shows in italics until that's unticked.
+
+   A concrete's ingredients are ticked in the list on the right while its form
+   is open: click one once if it goes in, again to make it a maybe, and a third
+   time to take it out. The box beside a ticked one takes how many parts of it
+   the concrete needs. A concrete's form also has **Synonyms** (other names it
+   goes by, which search finds), **Recipe**, **Chemical composition** and
+   **Reactions**. Ingredients have **Chemical composition** too.
 2. Click **Publish**. It sits just above the toolbar and shows how many
    changes haven't been published yet.
 3. The first time, it asks for the GitHub project and a key (see below). On the
@@ -51,6 +58,14 @@ there shows only what's unfinished, and **Clear** shows everything again.
   group, and Enter on a group's name renames it.
 
 The order is published along with everything else.
+
+## The table
+
+**Table**, at the top left of the paper, swaps the paper for a table of every
+concrete (down the side) against every ingredient (across the top). A filled
+square means the ingredient goes in, an outlined one means maybe, and a number
+is how many parts. It shows what the lists show, so their searches and tags
+narrow it too. **Paper** goes back.
 
 ## The paper
 
